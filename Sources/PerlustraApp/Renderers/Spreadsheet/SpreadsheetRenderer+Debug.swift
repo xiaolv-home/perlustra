@@ -69,6 +69,20 @@ import PerlustraCore
             case "startsort":
                 let kv = arg.split(separator: ",").map(String.init)
                 r.sort(fromSheetRow: Int(kv[0]) ?? 0, column: Int(kv[1]) ?? 0, ascending: kv.count < 3 || kv[2] != "desc")
+            case "hover":
+                let rc = arg.split(separator: ",").compactMap { Int($0) }
+                _ = r.grid.debugHover(row: rc.first ?? 0, col: rc.count > 1 ? rc[1] : 0)
+                print("SHEET hover now", r.grid.debugHoverShown)
+                await pause(0.5)
+                print("SHEET hover after", r.grid.debugHoverShown)
+                if rc.count > 2, let tip = window.childWindows?.first(where: { $0 is NSPanel }) {
+                    let shot = Process()
+                    shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    shot.arguments = ["-x", "-o", "-l", "\(tip.windowNumber)", NSTemporaryDirectory() + "perlustra-hover.png"]
+                    try? shot.run()
+                    shot.waitUntilExit()
+                    print("SHEET hovershot tip=\(tip.frame) window=\(window.frame)")
+                }
             case "fulltext":
                 let rc = arg.split(separator: ",").compactMap { Int($0) }
                 let p = GridPoint(row: rc.first ?? 0, col: rc.count > 1 ? rc[1] : 0)

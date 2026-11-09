@@ -131,6 +131,7 @@ final class GridView: NSView {
     }
 
     @objc private func scrolled() {
+        endHover()
         header.needsDisplay = true
         gutter.needsDisplay = true
         if layoutInfo.frozenRows > 0 { frozen.needsDisplay = true }
@@ -171,23 +172,48 @@ final class GridView: NSView {
         return (body, r.offsetBy(dx: 0, dy: -L.frozenHeight))
     }
 
-    // MARK: Tooltips
+    // MARK: Hover
 
     private var hoverCell: GridPoint?
+    private lazy var hoverTip = CellHoverTip()
 
-    /// Gives the cell under the pointer a tooltip with its whole text when that text is cut off.
+    /// Shows the whole text of the cell under the pointer when that text is cut off.
     func paneHover(_ e: NSEvent, in pane: GridPane) {
         let p = cell(at: gridLocation(e.locationInWindow))
         guard p != hoverCell else { return }
         hoverCell = p
-        pane.removeAllToolTips()
-        guard let p, let text = owner?.gridHoverText(p), let (host, rect) = editorHost(row: p.row, col: p.col), host === pane else { return }
-        pane.addToolTip(rect, owner: text as NSString, userData: nil)
+        guard let p, let window, let text = owner?.gridHoverText(p), let (host, rect) = editorHost(row: p.row, col: p.col), host === pane else {
+            hoverTip.hide()
+            return
+        }
+        hoverTip.show(text, below: window.convertToScreen(pane.convert(rect, to: nil)), over: window)
     }
 
-    func paneHoverEnded(_ pane: GridPane) {
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { endHover() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    #if DEBUG
+        /// Moves a pretend pointer onto a cell, as the automation's hover check.
+        func debugHover(row: Int, col: Int) -> NSWindow? {
+            guard let window, let (host, rect) = editorHost(row: row, col: col), let pane = host as? GridPane else { return nil }
+            let at = pane.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
+            guard
+                let e = NSEvent.mouseEvent(
+                    with: .mouseMoved, location: at, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 0, pressure: 0)
+            else { return nil }
+            paneHover(e, in: pane)
+            return hoverTip.isShown ? window.childWindows?.first : nil
+        }
+        var debugHoverShown: Bool { hoverTip.isShown }
+    #endif
+
+    /// Takes the hover text away (pointer left, click, scroll or key).
+    func endHover() {
         hoverCell = nil
-        pane.removeAllToolTips()
+        hoverTip.hide()
     }
 
     func scrollTo(row: Int, col: Int) {
@@ -342,6 +368,7 @@ final class GridView: NSView {
     // MARK: Keyboard
 
     override func keyDown(with e: NSEvent) {
+        endHover()
         guard let owner else { super.keyDown(with: e); return }
         let L = layoutInfo
         guard L.rowCount > 0, !L.cols.isEmpty else { super.keyDown(with: e); return }
@@ -462,17 +489,21 @@ final class GridPane: NSView {
         }
     }
 
-    override func mouseDown(with e: NSEvent) { grid?.paneMouseDown(e) }
+    override func mouseDown(with e: NSEvent) {
+        grid?.endHover()
+        grid?.paneMouseDown(e)
+    }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
     }
     override func mouseMoved(with e: NSEvent) { grid?.paneHover(e, in: self) }
-    override func mouseExited(with e: NSEvent) { grid?.paneHoverEnded(self) }
+    override func mouseExited(with e: NSEvent) { grid?.endHover() }
     override func menu(for event: NSEvent) -> NSMenu? { grid?.cellMenu(for: event) }
     override func magnify(with e: NSEvent) { grid?.magnify(with: e) }
     override func scrollWheel(with e: NSEvent) {
+        grid?.endHover()
         if isFrozenBand { grid?.scroll.scrollWheel(with: e) } else { super.scrollWheel(with: e) }
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
