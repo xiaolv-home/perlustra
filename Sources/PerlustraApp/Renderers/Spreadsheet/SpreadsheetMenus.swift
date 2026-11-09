@@ -38,6 +38,9 @@ extension SpreadsheetRenderer {
 
     func gridMenu(at point: GridPoint?) -> NSMenu? {
         menu { item, sep in
+            if let p = point, fullText(row: p.row, col: p.col) != nil {
+                item("查看完整内容") { [weak self] in self?.gridShowFullText(p) }
+            }
             item("拷贝") { [weak self] in self?.gridCopy() }
             item("拷贝统计结果") { [weak self] in self?.copyStats() }
             item("把选区填进计算框") { [weak self] in self?.insertSelectionReference() }

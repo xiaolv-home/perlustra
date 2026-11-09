@@ -69,6 +69,21 @@ import PerlustraCore
             case "startsort":
                 let kv = arg.split(separator: ",").map(String.init)
                 r.sort(fromSheetRow: Int(kv[0]) ?? 0, column: Int(kv[1]) ?? 0, ascending: kv.count < 3 || kv[2] != "desc")
+            case "fulltext":
+                let rc = arg.split(separator: ",").compactMap { Int($0) }
+                let p = GridPoint(row: rc.first ?? 0, col: rc.count > 1 ? rc[1] : 0)
+                print("SHEET hover", r.gridHoverText(p).map { "\($0.count) 字" } ?? "不截断")
+                r.gridShowFullText(p)
+                await pause(0.6)
+                print("SHEET panel", r.cellTextPanel?.isShown ?? false)
+                if rc.count > 2, let w = r.cellTextPanel?.contentViewController?.view.window {
+                    let shot = Process()
+                    shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    shot.arguments = ["-x", "-o", "-l", "\(w.windowNumber)", NSTemporaryDirectory() + "perlustra-cell-panel.png"]
+                    try? shot.run()
+                    shot.waitUntilExit()
+                    print("SHEET panelshot", NSTemporaryDirectory() + "perlustra-cell-panel.png")
+                }
             case "rows":
                 print(
                     "SHEET rows",

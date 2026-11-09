@@ -30,6 +30,9 @@ protocol GridViewOwner: AnyObject {
     /// False when the table is only for looking: keys then navigate instead of editing.
     var gridEditable: Bool { get }
     func gridAppearanceChanged()
+    /// A cell's text when it is cut off where drawn (shown as a tooltip), else nil.
+    func gridHoverText(_ p: GridPoint) -> String?
+    func gridShowFullText(_ p: GridPoint)
 }
 
 /// The spreadsheet grid: a column header and row gutter that follow scrolling, a frozen band
@@ -168,6 +171,25 @@ final class GridView: NSView {
         return (body, r.offsetBy(dx: 0, dy: -L.frozenHeight))
     }
 
+    // MARK: Tooltips
+
+    private var hoverCell: GridPoint?
+
+    /// Gives the cell under the pointer a tooltip with its whole text when that text is cut off.
+    func paneHover(_ e: NSEvent, in pane: GridPane) {
+        let p = cell(at: gridLocation(e.locationInWindow))
+        guard p != hoverCell else { return }
+        hoverCell = p
+        pane.removeAllToolTips()
+        guard let p, let text = owner?.gridHoverText(p), let (host, rect) = editorHost(row: p.row, col: p.col), host === pane else { return }
+        pane.addToolTip(rect, owner: text as NSString, userData: nil)
+    }
+
+    func paneHoverEnded(_ pane: GridPane) {
+        hoverCell = nil
+        pane.removeAllToolTips()
+    }
+
     func scrollTo(row: Int, col: Int) {
         let L = layoutInfo
         guard row >= 0, row < L.rowCount else { return }
@@ -207,7 +229,8 @@ final class GridView: NSView {
         window?.makeFirstResponder(self)
         guard let owner, let p = cell(at: gridLocation(e.locationInWindow)) else { return }
         if e.clickCount == 2 {
-            owner.gridBeginEdit(p, typed: nil)
+            // Editing takes the double-click when allowed; otherwise it opens the whole text.
+            if owner.gridEditable { owner.gridBeginEdit(p, typed: nil) } else { owner.gridShowFullText(p) }
             return
         }
         var (rects, _, anchor) = owner.gridSelection()
@@ -332,6 +355,9 @@ final class GridView: NSView {
         case 36, 76, 120:  // Return / Enter / F2 start editing the active cell (or move down)
             if owner.gridEditable { owner.gridBeginEdit(active, typed: nil); return }
             dr = shift ? -1 : 1
+        case 49 where !owner.gridEditable && !cmd:  // Space: the active cell's whole text, like Quick Look
+            owner.gridShowFullText(active)
+            return
         case 51, 117:  // Delete / Forward delete clear the selection
             if owner.gridEditable { owner.gridClearSelection() }
             return
@@ -437,6 +463,13 @@ final class GridPane: NSView {
     }
 
     override func mouseDown(with e: NSEvent) { grid?.paneMouseDown(e) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+    override func mouseMoved(with e: NSEvent) { grid?.paneHover(e, in: self) }
+    override func mouseExited(with e: NSEvent) { grid?.paneHoverEnded(self) }
     override func menu(for event: NSEvent) -> NSMenu? { grid?.cellMenu(for: event) }
     override func magnify(with e: NSEvent) { grid?.magnify(with: e) }
     override func scrollWheel(with e: NSEvent) {

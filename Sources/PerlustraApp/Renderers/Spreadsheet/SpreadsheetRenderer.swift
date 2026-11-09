@@ -79,6 +79,8 @@ final class SpreadsheetRenderer: NSObject, Renderer, ObservableObject, GridViewO
     let grid = GridView()
     let container = NSView()
     var popover: NSPopover?
+    /// The panel showing a cell's whole text.
+    var cellTextPanel: NSPopover?
     weak var host: RenderHost?
     var file: FileContext?
     var converted: String?
@@ -349,6 +351,7 @@ final class SpreadsheetRenderer: NSObject, Renderer, ObservableObject, GridViewO
         editor = nil
         host?.window?.isDocumentEdited = false
         popover?.close()
+        cellTextPanel?.close()
         original?.close()
         original = nil
         grid.owner = nil

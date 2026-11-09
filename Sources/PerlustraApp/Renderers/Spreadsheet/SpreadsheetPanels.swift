@@ -51,11 +51,25 @@ struct FormulaBar: View {
                     .textFieldStyle(.plain)
                     .focused($cellFocused)
                     .onSubmit { r.commitFormulaBar() }
+                if r.formulaText.count > 24 {
+                    Button {
+                        r.showActiveCellText()
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("看完整内容")
+                }
             } else {
-                Text(r.formulaText.isEmpty ? " " : r.formulaText)
-                    .lineLimit(1).truncationMode(.tail)
-                    .textSelection(.enabled)
-                    .help(r.formulaText)
+                Button {
+                    r.showActiveCellText()
+                } label: {
+                    Text(r.formulaText.isEmpty ? " " : r.formulaText)
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(r.formulaText.isEmpty ? "" : "点一下看完整内容（也可以双击单元格或按空格）")
             }
         }
         .font(.system(size: 12, design: .monospaced))
