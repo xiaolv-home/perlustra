@@ -41,13 +41,22 @@ public enum CellValue: Sendable, Equatable {
         }
     }
 
-    /// CSV/TSV text becomes a number when it unambiguously is one (keeps leading-zero codes as text).
+    /// CSV/TSV text becomes a number when it unambiguously is one. Codes with leading zeros stay
+    /// text, and so does anything with more significant digits than a number can hold exactly (a
+    /// 19-digit order number would otherwise lose its last digits and show as 7.24105097e+18).
     public static func infer(_ s: String) -> CellValue {
         if s.isEmpty { return .empty }
         let t = s.trimmingCharacters(in: .whitespaces)
         if t.count > 1, t.hasPrefix("0"), !t.hasPrefix("0."), t.allSatisfy({ $0.isNumber }) { return .text(s) }
+        if significantDigits(t) > 15 { return .text(s) }
         if let d = parseNumber(t), t.count < 20 { return .number(d) }
         return .text(s)
+    }
+
+    /// Digits that carry the value: those of the part before any exponent, without leading zeros.
+    static func significantDigits(_ s: String) -> Int {
+        let mantissa = s.prefix { $0 != "e" && $0 != "E" }
+        return mantissa.filter(\.isNumber).drop { $0 == "0" }.count
     }
 
     public static func parseNumber(_ s: String) -> Double? {

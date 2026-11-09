@@ -141,6 +141,14 @@ struct SpreadsheetReaderTests {
         if case .number = s.cell(1, 3) {} else { Issue.record("营业额 should be numeric") }
         #expect(CellValue.infer("007") == .text("007"))
         #expect(CellValue.infer("1,234.5") == .number(1234.5))
+        // Long IDs keep every digit instead of turning into 7.24105097e+18.
+        #expect(CellValue.infer("7241050970000123456") == .text("7241050970000123456"))
+        #expect(CellValue.infer("-7241050970000123456") == .text("-7241050970000123456"))
+        #expect(CellValue.infer("1234567890123456") == .text("1234567890123456"))
+        #expect(CellValue.infer("123456789012345") == .number(123_456_789_012_345))
+        #expect(CellValue.infer("902483485492") == .number(902_483_485_492))
+        #expect(CellValue.infer("0.000000000000001") == .number(0.000000000000001))
+        #expect(CellValue.infer("1.5e18") == .number(1.5e18))
     }
 
     @Test("筛选、排序、隐藏行与选区统计")
