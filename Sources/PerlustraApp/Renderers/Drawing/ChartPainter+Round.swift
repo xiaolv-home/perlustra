@@ -28,7 +28,7 @@ extension ChartPainter {
                 path.appendArc(withCenter: c, radius: radius, startAngle: CGFloat(angle), endAngle: CGFloat(angle + sweep), clockwise: false)
             }
             path.close()
-            ns(s.series.pointColors[i] ?? theme.seriesColor(i)).setFill()
+            ns(s.series.pointColors[i] ?? pointColor(i, of: values.count)).setFill()
             path.fill()
             (isDark ? cardColor : NSColor.white).setStroke()
             path.lineWidth = 1.2 * scale

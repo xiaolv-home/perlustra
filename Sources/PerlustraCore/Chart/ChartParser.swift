@@ -12,6 +12,7 @@ public enum ChartParser {
         guard let chart = root.name == "chart" ? root : root.child("chart") else { return nil }
         var spec = ChartSpec()
         spec.theme = theme
+        spec.style = style(root)
         spec.title = chart.child("title").map { text(of: $0, theme: theme) }
         spec.autoTitleDeleted = chart.value(of: "autoTitleDeleted").map(flag) ?? false
         spec.displayBlanksAs = chart.value(of: "dispBlanksAs") ?? "gap"
@@ -32,6 +33,20 @@ public enum ChartParser {
             if let axis = axis(node, theme: theme) { spec.axes.append(axis) }
         }
         return spec
+    }
+
+    /// `c:style`, written plain or (by Excel 2010 on) as the fallback of an
+    /// `mc:AlternateContent` whose preferred choice is `c14:style` (the same number + 100).
+    static func style(_ root: XMLTree) -> Int? {
+        for node in root.children {
+            if node.name == "style", let v = node["val"].flatMap(Int.init) { return v > 100 ? v - 100 : v }
+            if node.name == "AlternateContent" {
+                for branch in node.children {
+                    if let v = branch.child("style")?["val"].flatMap(Int.init) { return v > 100 ? v - 100 : v }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: Plots

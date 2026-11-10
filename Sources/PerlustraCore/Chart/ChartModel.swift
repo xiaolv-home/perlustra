@@ -16,8 +16,25 @@ public struct ChartSpec: Sendable {
     public var displayBlanksAs = "gap"
     /// The document's theme, for series that leave their colour to it.
     public var theme = DrawingTheme.office
+    /// Excel's built-in chart style (`c:style`, 1–48). It picks the colours of series that
+    /// carry no fill of their own — openpyxl charts rely on it entirely.
+    public var style: Int?
 
     public init() {}
+
+    /// The colour Excel gives series `index` of `count` when the file leaves it to the style.
+    /// Styles come in rows of eight: grey, the six accents in turn, then one accent per style,
+    /// spread from darker to lighter across the series.
+    public func seriesColor(_ index: Int, of count: Int) -> RGBA {
+        guard let style, (1...48).contains(style) else { return theme.seriesColor(index) }
+        let column = (style - 1) % 8
+        if column == 1 { return theme.seriesColor(index) }
+        let base = column == 0 ? RGBA(r: 128, g: 128, b: 128) : theme.seriesColor(column - 2)
+        guard count > 1 else { return base }
+        // Same spread as Excel: −70 % (shade) … +70 % (tint), evenly over the series.
+        let t = Double(index % count + 1) / Double(count + 1) * 1.4 - 0.7
+        return t < 0 ? base.linearShade(1 + t) : base.linearTint(1 - t)
+    }
 }
 
 /// Text that is either written out or taken from a cell.

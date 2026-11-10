@@ -245,7 +245,7 @@ extension ChartPainter {
                     horizontal
                     ? CGRect(x: min(a, b), y: offset, width: abs(b - a), height: barW)
                     : CGRect(x: offset, y: min(a, b), width: barW, height: abs(b - a))
-                let fill = s.series.pointColors[i].map(ns) ?? (p.plot.varyColors && p.series.count == 1 ? ns(theme.seriesColor(i)) : color(s))
+                let fill = s.series.pointColors[i].map(ns) ?? (p.plot.varyColors && p.series.count == 1 ? ns(pointColor(i, of: p.categories.count)) : color(s))
                 if !s.series.noFill { fill.setFill(); r.fill() }
                 if let lc = s.series.line, !s.series.noLine {
                     ns(lc).setStroke()

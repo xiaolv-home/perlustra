@@ -90,13 +90,23 @@ struct ChartPainter {
         NSColor(srgbRed: CGFloat(c.r) / 255, green: CGFloat(c.g) / 255, blue: CGFloat(c.b) / 255, alpha: CGFloat(c.a) / 255)
     }
 
+    /// Fill of a bar, area, slice or bubble. A series' outline is not its fill: openpyxl and
+    /// Excel's styles give bars a thin white edge and leave the fill to the chart style.
     func color(_ s: ResolvedSeries) -> NSColor {
-        ns(s.series.fill ?? s.series.line ?? theme.seriesColor(s.index))
+        ns(s.series.fill ?? styleColor(s.index))
     }
 
     func lineColor(_ s: ResolvedSeries) -> NSColor {
-        ns(s.series.line ?? s.series.fill ?? theme.seriesColor(s.index))
+        ns(s.series.line ?? s.series.fill ?? styleColor(s.index))
     }
+
+    /// The chart style's colour for series `i`, spread over every series in the chart.
+    func styleColor(_ i: Int) -> RGBA {
+        spec.seriesColor(i, of: chart.plots.reduce(0) { $0 + $1.series.count })
+    }
+
+    /// Colour of point `i` when a single series varies its colours (pies, `varyColors`).
+    func pointColor(_ i: Int, of count: Int) -> RGBA { spec.seriesColor(i, of: count) }
 
     @discardableResult
     func drawText(_ s: String, font: NSFont, color: NSColor, in r: CGRect, align: NSTextAlignment) -> CGFloat {
@@ -169,7 +179,7 @@ struct ChartPainter {
         if chart.plots.count == 1, let p = chart.plots.first, p.plot.varyColors || p.plot.kind == .pie || p.plot.kind == .doughnut, p.series.count == 1 {
             let s = p.series[0]
             return p.categories.indices.filter { !hidden.contains($0) }.map { i in
-                (p.categories[i], ns(s.series.pointColors[i] ?? theme.seriesColor(i)), false)
+                (p.categories[i], ns(s.series.pointColors[i] ?? pointColor(i, of: p.categories.count)), false)
             }
         }
         var out: [(String, NSColor, Bool)] = []

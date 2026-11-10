@@ -138,6 +138,22 @@ extension RGBA {
     }
 
     /// Mixes towards another colour by `amount` (0 = unchanged, 1 = the other colour).
+    /// Office's `shade` / `tint`, worked in linear light as Office does: `linearShade(0.65)`
+    /// keeps 65 % of the colour, `linearTint(0.65)` keeps 65 % and adds white for the rest.
+    public func linearShade(_ keep: Double) -> RGBA { linearMap { $0 * keep } }
+    public func linearTint(_ keep: Double) -> RGBA { linearMap { $0 * keep + (1 - keep) } }
+
+    private func linearMap(_ f: (Double) -> Double) -> RGBA {
+        func ch(_ x: UInt8) -> UInt8 {
+            let c = Double(x) / 255
+            let lin = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            let out = max(0, min(1, f(lin)))
+            let s = out <= 0.0031308 ? out * 12.92 : 1.055 * pow(out, 1 / 2.4) - 0.055
+            return UInt8((s * 255).rounded())
+        }
+        return RGBA(r: ch(r), g: ch(g), b: ch(b), a: a)
+    }
+
     public func mix(with o: RGBA, amount: Double) -> RGBA {
         let t = max(0, min(1, amount))
         func m(_ x: UInt8, _ y: UInt8) -> UInt8 { UInt8((Double(x) * (1 - t) + Double(y) * t).rounded()) }

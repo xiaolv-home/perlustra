@@ -75,6 +75,38 @@ struct DrawingTests {
         #expect(pie.plots[0].plot.varyColors, "饼图每块一种颜色")
     }
 
+    @Test("没写填充色的系列按图表样式配色:白边框不能当填充,单色样式由深到浅")
+    func styleColors() throws {
+        let wb = try Self.workbook()
+        let main = Self.charts(try #require(wb.sheets.first { $0.name == "图表分析" }))
+        let clustered = try #require(main.first { $0.style == 12 })
+        let s = clustered.plots[0].series
+        #expect(s.allSatisfy { $0.fill == nil && $0.line == RGBA(hex: "F2F2F2") }, "只有边框没有填充")
+        let colors = (0..<3).map { clustered.seriesColor($0, of: 3) }
+        let accent2 = clustered.theme.seriesColor(1)
+        #expect(colors[1] == accent2, "中间那组就是主题色")
+        let lum = colors.map { Int($0.r) + Int($0.g) + Int($0.b) }
+        #expect(lum[0] < lum[1] && lum[1] < lum[2], "第一组最深、最后一组最浅")
+        #expect(colors.allSatisfy { $0.r > $0.b }, "都还是同一种红")
+        let stacked = try #require(main.first { $0.style == 13 })
+        #expect(stacked.seriesColor(0, of: 2) != stacked.seriesColor(1, of: 2), "堆叠的两段分得开")
+        // 没有样式、样式 2/10(彩色)沿用主题六色
+        var plain = ChartSpec()
+        #expect(plain.seriesColor(1, of: 3) == plain.theme.seriesColor(1))
+        plain.style = 10
+        #expect(plain.seriesColor(1, of: 3) == plain.theme.seriesColor(1))
+    }
+
+    @Test("Excel 2010 起样式写在 AlternateContent 里(c14:style = 编号 + 100)")
+    func styleInAlternateContent() throws {
+        let xml = """
+            <c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">
+            <mc:AlternateContent><mc:Choice Requires="c14" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart"><c14:style val="112"/></mc:Choice><mc:Fallback><c:style val="12"/></mc:Fallback></mc:AlternateContent>
+            <c:chart><c:plotArea/></c:chart></c:chartSpace>
+            """
+        #expect(ChartParser.parse(Data(xml.utf8))?.style == 12)
+    }
+
     @Test("图片和整页图表")
     func picturesAndChartSheets() throws {
         let wb = try Self.workbook()

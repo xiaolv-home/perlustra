@@ -41,6 +41,11 @@ bar = BarChart()
 bar.title = "图1 · 各战区 GMV 三周对比"
 bar.add_data(Reference(ws, min_col=3, max_col=5, min_row=header_row, max_row=last), titles_from_data=True)
 bar.set_categories(cats)
+# Like the weekly report: no fill on the series, only a thin white edge — the colours come
+# from Excel's chart style (12 = shades of accent 2, 13 = shades of accent 3).
+bar.style = 12
+for s in bar.series:
+    s.graphicalProperties.line.solidFill = "F2F2F2"
 ws.add_chart(bar, "B4")
 
 stacked = BarChart()
@@ -49,6 +54,9 @@ stacked.grouping = "stacked"
 stacked.overlap = 100
 stacked.add_data(Reference(ws, min_col=3, max_col=4, min_row=header_row, max_row=last), titles_from_data=True)
 stacked.set_categories(cats)
+stacked.style = 13
+for s in stacked.series:
+    s.graphicalProperties.line.solidFill = "F2F2F2"
 ws.add_chart(stacked, "J4")
 
 horizontal = BarChart()
