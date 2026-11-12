@@ -163,7 +163,7 @@ scripts/build-app.sh release     # Universal、优化、ad-hoc 签名 → build/
 ```
 
 ```bash
-scripts/make-dmg.sh              # → build/Perlustra-1.0.0.dmg
+scripts/make-dmg.sh              # → build/Perlustra-1.1.0.dmg
 ```
 
 开发时用 `scripts/build-app.sh debug`，只编译本机架构，速度更快。
