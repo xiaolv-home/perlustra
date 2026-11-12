@@ -26,6 +26,7 @@ struct FormatDetectorTests {
             (Array("wOF2".utf8), .font, "WOFF2"),
             (Array("bplist00".utf8), .plist, "PLIST"),
             (Array("8BPS".utf8), .image, "PSD"),
+            (Array("SQLite format 3\0".utf8), .sqlite, "SQLITE"),
         ] as [([UInt8], FormatFamily, String)])
     func magic(bytes: [UInt8], family: FormatFamily, token: String) {
         let f = detect(bytes + [UInt8](repeating: 0, count: 32), "file")

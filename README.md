@@ -33,6 +33,7 @@
 | 数据 | json、geojson | 自研保序解析器 | 可折叠树视图（保持键顺序、拷贝值 / 路径）、源码；单行压缩 JSON 自动格式化 |
 | 数据 | jsonl、ndjson | TextKit | 按行当文本高亮，不是可折叠树 |
 | 数据 | plist（XML / 二进制） | PropertyListSerialization | 树视图；二进制 plist 自动转为可读 XML |
+| 数据 | sqlite、sqlite3、db3 | Perlustra 自有 SQLite | 列出表和视图（名称、行数、列数），选中看每张表前 200 行数据；只读 |
 | 网页 | html、htm、xhtml | WebKit（禁用 JavaScript） | 远程资源拦截；可切换源码 |
 | 字体 | ttf、otf、ttc、woff、woff2、dfont | CoreText | 字体样张、自定义预览文字、字符集网格、字面切换、字体信息（不会安装字体） |
 | 压缩包 | zip、7z、rar、tar、gz/tgz、bz2、xz、zst、lz4、iso、cpio、xar/pkg、jar/apk、deb、rpm、cab… | 系统 libarchive | 只列目录结构，不解压；中文（GBK）文件名不乱码 |

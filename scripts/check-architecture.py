@@ -21,6 +21,7 @@ CORE_LAYERS = {
     "Detection": {"Support"},
     "Text": {"Support", "Detection"},
     "Archive": {"Support", "Detection"},
+    "SQLite": {"Support"},
     **{name: {"Support", "Detection", "Text", "Archive"} | ENGINE for name in ENGINE},
     "AI": {"Support", "Security", "Detection", "Text", "Archive"} | ENGINE,
 }

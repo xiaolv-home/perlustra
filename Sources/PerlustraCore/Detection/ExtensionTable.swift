@@ -42,6 +42,7 @@ public enum ExtensionTable {
     public static let csv: Set<String> = ["csv"]
     public static let tsv: Set<String> = ["tsv", "tab"]
     public static let html: Set<String> = ["html", "htm", "xhtml", "shtml"]
+    public static let sqlite: Set<String> = ["sqlite", "sqlite3", "db3", "s3db", "sl3"]
     public static let font: Set<String> = ["ttf", "otf", "ttc", "otc", "woff", "woff2", "dfont"]
 
     public static let archive: Set<String> = [

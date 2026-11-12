@@ -14,7 +14,10 @@ let package = Package(
         .target(
             name: "PerlustraCore",
             dependencies: ["CArchive"],
-            path: "Sources/PerlustraCore"
+            path: "Sources/PerlustraCore",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .target(
             name: "PerlustraApp",

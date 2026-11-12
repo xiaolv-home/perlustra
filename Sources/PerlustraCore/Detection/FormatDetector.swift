@@ -103,6 +103,7 @@ public enum FormatDetector {
             var f = make(.csv, "TSV 表格"); f.delimiter = UInt8(ascii: "\t"); return f
         }
         if T.html.contains(ext) { return make(.html, "HTML 网页", lang: "html") }
+        if T.sqlite.contains(ext) { return make(.sqlite, "SQLite 数据库") }
         if T.font.contains(ext) { return make(.font, "\(token) 字体") }
         if let k = T.iwork[ext] {
             var f = make(.iwork, "\(k.appName) 文稿"); f.iwork = k; return f
@@ -274,7 +275,7 @@ public enum FormatDetector {
         // Structured text with signatures
         if ascii(0, "bplist0") { return DetectedFormat(family: .plist, token: "PLIST", label: "二进制属性列表", language: "xml", source: .magic) }
         if ascii(0, "{\\rtf") { return m(.office, "RTF", "RTF 富文本") }
-        if ascii(0, "SQLite format 3\0") { return m(.binary, "SQLITE", "SQLite 数据库") }
+        if ascii(0, "SQLite format 3\0") { return m(.sqlite, "SQLITE", "SQLite 数据库") }
 
         // Text that announces itself (after BOM-stripping)
         if TextSniffer.isLikelyText(d) {

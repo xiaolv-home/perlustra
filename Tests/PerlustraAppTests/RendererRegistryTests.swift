@@ -29,6 +29,13 @@ struct RendererRegistryTests {
         #expect(try chain("表.csv", "a,b\n1,2\n").first == "SpreadsheetRenderer")
     }
 
+    @Test("SQLite 数据库用专用渲染器打开")
+    func sqlite() throws {
+        let c = try chain("数据.sqlite", "SQLite format 3\0" + String(repeating: "\0", count: 64))
+        #expect(c.first == "SQLiteRenderer")
+        #expect(c.last == "HexRenderer")
+    }
+
     @Test("JSON 打不开时能退回纯文本")
     func json() throws {
         let c = try chain("配置.json", "{\"a\": 1}")

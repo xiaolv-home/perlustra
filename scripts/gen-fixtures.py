@@ -4,7 +4,7 @@
 Needs: Pillow, fontTools (pip), ffmpeg (brew), plus macOS tools textutil, sips, bsdtar.
 iWork / Office samples come from scripts/gen-iwork-fixtures.sh (needs Pages/Keynote/Numbers).
 """
-import json, os, plistlib, random, shutil, struct, subprocess, sys, zlib
+import json, os, plistlib, random, shutil, sqlite3, struct, subprocess, sys, zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent / "fixtures"
@@ -160,6 +160,19 @@ p("data", "broken.json").write_text('{"a": 1, "b": [1, 2,', encoding="utf-8")
 plist_obj = {"CFBundleName": "Perlustra", "Version": 3, "Enabled": True, "Items": ["一", "二"], "Data": b"\x00\x01\x02", "Nested": {"Key": "Value"}}
 p("data", "binary.plist").write_bytes(plistlib.dumps(plist_obj, fmt=plistlib.FMT_BINARY))
 p("data", "xml.plist").write_bytes(plistlib.dumps(plist_obj, fmt=plistlib.FMT_XML))
+
+# SQLite 数据库样例：表、视图、NULL、整数主键都在里面。
+_db = sqlite3.connect(p("data", "demo.sqlite"))
+_db.executescript(
+    """
+    CREATE TABLE 门店 (门店ID INTEGER PRIMARY KEY, 城市 TEXT, 营业额 REAL, 开业日期 TEXT);
+    CREATE TABLE 订单 (订单号 TEXT, 门店ID INTEGER, 金额 REAL, 备注 TEXT);
+    INSERT INTO 门店 VALUES (1,'天津',120000.5,'2021-03-01'),(2,'北京',98000,'2022-06-15'),(3,'上海',155000.25,'2023-01-20');
+    INSERT INTO 订单 VALUES ('A001',1,350.5,'正常'),('A002',1,NULL,'待补'),('A003',2,89.9,'正常'),('A004',3,1200,'大额');
+    CREATE VIEW 高额订单 AS SELECT * FROM 订单 WHERE 金额 > 500;
+    """
+)
+_db.close()
 
 # ---------------------------------------------------------------- images
 from PIL import Image, ImageDraw, ImageFont

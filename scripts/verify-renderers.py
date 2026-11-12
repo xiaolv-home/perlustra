@@ -21,6 +21,7 @@ EXPECT = {
     "docs/README.md": "WebKit", "docs/page.html": "WebKit", "docs/outline.pdf": "PDFKit",
     "data/config.json": "JSON", "data/minified.json": "JSON", "data/events.jsonl": "TextKit", "data/broken.json": "TextKit",
     "data/binary.plist": "Plist", "data/xml.plist": "Plist",
+    "data/demo.sqlite": "SQLite",
     "data/sales-utf8.csv": "表格", "data/sales-gbk.csv": "表格", "data/table.tsv": "表格", "data/large-200k.csv": "表格",
     "office/sales.xlsx": "表格", "office/stock.ods": "表格", "office/report-styled.xlsx": "表格", "office/charts.xlsx": "表格", "office/rich-text.xlsx": "表格",
     "images/photo.jpg": "ImageIO", "images/exif-camera.jpg": "ImageIO", "images/orientation-6.jpg": "ImageIO",
