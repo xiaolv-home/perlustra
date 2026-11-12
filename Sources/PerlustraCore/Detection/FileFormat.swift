@@ -4,7 +4,7 @@ import Foundation
 public enum FormatFamily: String, Sendable, CaseIterable {
     case pdf, image, svg, video, audio
     case text, code, markdown, json, plist, csv, html
-    case font, archive, iwork, office, quicklook, sqlite
+    case font, archive, iwork, office, quicklook, sqlite, parquet
     case directory, binary
 
     /// Visual category used for badges and tints.
@@ -14,7 +14,7 @@ public enum FormatFamily: String, Sendable, CaseIterable {
         case .image, .svg: return .image
         case .video, .audio: return .media
         case .text, .code, .markdown: return .code
-        case .json, .plist, .csv, .sqlite: return .data
+        case .json, .plist, .csv, .sqlite, .parquet: return .data
         case .html: return .web
         case .font: return .font
         case .archive, .directory: return .archive

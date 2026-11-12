@@ -27,6 +27,8 @@ struct FormatDetectorTests {
             (Array("bplist00".utf8), .plist, "PLIST"),
             (Array("8BPS".utf8), .image, "PSD"),
             (Array("SQLite format 3\0".utf8), .sqlite, "SQLITE"),
+            (Array("PAR1".utf8), .parquet, "PARQUET"),
+            (Array("PARE".utf8), .parquet, "PARQUET"),
         ] as [([UInt8], FormatFamily, String)])
     func magic(bytes: [UInt8], family: FormatFamily, token: String) {
         let f = detect(bytes + [UInt8](repeating: 0, count: 32), "file")
@@ -47,6 +49,8 @@ struct FormatDetectorTests {
 
     @Test("扩展名错误时以内容为准并标记")
     func mismatch() {
+        let parquet = detect("PAR1" + String(repeating: "\0", count: 32), "data.txt")
+        #expect(parquet.family == .parquet && parquet.extensionMismatch)
         let png: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] + [UInt8](repeating: 0, count: 40)
         let f = detect(png, "photo.txt")
         #expect(f.family == .image)

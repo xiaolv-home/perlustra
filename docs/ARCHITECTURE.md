@@ -83,6 +83,8 @@ Markdown、HTML 走 WKWebView。所有资源经 `perlustra://` 协议提供（`p
 
 ## 怎么加一种新格式
 
+Parquet 在 `PerlustraCore/Parquet` 中读取，界面在 `ParquetRenderer`。固定版本的 DuckDB C 头文件在 `Sources/CDuckDB`，通用动态库由 `scripts/duckdb.sh` 校验下载，打包到 `Contents/Frameworks` 后按需加载；只有 Debug 测试可通过环境变量指定库。只使用固定查询和绑定参数，通配符文件名按字面值处理，关闭扩展自动安装和网络/其他文件访问。读取在后台进行，限制行列数量，带取消和超时；不依赖 Python。更新库版本时同时更新 C 头、下载哈希、许可证和样例回归。
+
 1. 在 `Renderers/` 下写一个实现 `Renderer` 的类。
 2. 在 `RendererRegistry.chain(for:)` 里排好它的位置，并在 `RendererRegistryTests` 里写明。
 3. 在 `fixtures/` 放一个样例，并加进 `scripts/verify-renderers.py`。

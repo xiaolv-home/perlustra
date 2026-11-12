@@ -34,6 +34,7 @@
 | 数据 | jsonl、ndjson | TextKit | 按行当文本高亮，不是可折叠树 |
 | 数据 | plist（XML / 二进制） | PropertyListSerialization | 树视图；二进制 plist 自动转为可读 XML |
 | 数据 | sqlite、sqlite3、db3 | Perlustra 自有 SQLite | 列出表和视图（名称、行数、列数），选中看每张表前 200 行数据；只读 |
+| 数据 | parquet、parq | 内置 DuckDB | 离线只读预览，显示字段名、类型、总行数和行组数；前 200 行、最多 256 列，选中行 ⌘C 复制；支持 Snappy/Gzip/Zstd/Brotli/LZ4 和无压缩，长整数、小数、日期、列表与结构体 |
 | 网页 | html、htm、xhtml | WebKit（禁用 JavaScript） | 远程资源拦截；可切换源码 |
 | 字体 | ttf、otf、ttc、woff、woff2、dfont | CoreText | 字体样张、自定义预览文字、字符集网格、字面切换、字体信息（不会安装字体） |
 | 压缩包 | zip、7z、rar、tar、gz/tgz、bz2、xz、zst、lz4、iso、cpio、xar/pkg、jar/apk、deb、rpm、cab… | 系统 libarchive | 只列目录结构，不解压；中文（GBK）文件名不乱码 |
@@ -153,7 +154,7 @@ xattr -dr com.apple.quarantine /Applications/Perlustra.app
 
 ## 构建
 
-只需要 Command Line Tools，不需要完整 Xcode：
+只需要 Command Line Tools，不需要完整 Xcode。首次构建或测试会下载并校验固定版本的 DuckDB（1.5.4，约 34 MB 下载）；缓存后可离线构建。读取库随应用分发，用户无需安装 Python、DuckDB 或其他工具。它只在打开 Parquet 时加载，Universal 读取库会使安装体积增加约 107 MB（压缩后的安装包增量更小）：
 
 ```bash
 git clone https://github.com/xiaolv-home/perlustra.git
@@ -188,6 +189,8 @@ python3 scripts/verify-renderers.py    # 端到端：用真实应用逐个打开
 ```
 
 提交前跑 `scripts/check.sh`，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+Parquet 样例已入库，不依赖 Python 运行测试；需要重建时安装 `pyarrow` 后运行 `python3 scripts/gen-parquet-fixtures.py`。预览不提供 SQL 执行或编辑，限于所选的本地文件。带时区的时间统一显示为 UTC，无时区时间保持原值；超长单元格最多保留 16,384 个字符并明确标注截断，复制也使用截断后的内容。加密文件及读取库尚不支持的编码（如整数的 BYTE_STREAM_SPLIT）会说明失败原因并降级查看，不当作空表；后台读取可以取消，20 秒仍未完成会停止。
 
 调试参数（除 `--probe` 和 `--purge-recents` 外只在 debug 版可用）：
 - `Perlustra --probe 文件…`：输出每个文件实际使用的渲染引擎。

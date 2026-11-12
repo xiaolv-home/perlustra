@@ -36,6 +36,13 @@ struct RendererRegistryTests {
         #expect(c.last == "HexRenderer")
     }
 
+    @Test("Parquet 使用专用预览，损坏时可降级")
+    func parquet() throws {
+        let c = try chain("数据.parquet", "PAR1" + String(repeating: "\0", count: 64))
+        #expect(c.first == "ParquetRenderer")
+        #expect(c.last == "HexRenderer")
+    }
+
     @Test("JSON 打不开时能退回纯文本")
     func json() throws {
         let c = try chain("配置.json", "{\"a\": 1}")

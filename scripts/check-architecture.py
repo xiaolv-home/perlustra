@@ -22,6 +22,7 @@ CORE_LAYERS = {
     "Text": {"Support", "Detection"},
     "Archive": {"Support", "Detection"},
     "SQLite": {"Support"},
+    "Parquet": {"Support"},
     **{name: {"Support", "Detection", "Text", "Archive"} | ENGINE for name in ENGINE},
     "AI": {"Support", "Security", "Detection", "Text", "Archive"} | ENGINE,
 }

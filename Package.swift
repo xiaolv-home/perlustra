@@ -10,10 +10,11 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(name: "CArchive", path: "Sources/CArchive"),
+        .systemLibrary(name: "CDuckDB", path: "Sources/CDuckDB"),
         .target(name: "PerlustraObjC", path: "Sources/PerlustraObjC"),
         .target(
             name: "PerlustraCore",
-            dependencies: ["CArchive"],
+            dependencies: ["CArchive", "CDuckDB"],
             path: "Sources/PerlustraCore",
             linkerSettings: [
                 .linkedLibrary("sqlite3")

@@ -247,6 +247,7 @@ enum RendererRegistry {
         case .font: out = [FontRenderer.self]
         case .archive: out = [ArchiveRenderer.self]
         case .sqlite: out = [SQLiteRenderer.self]
+        case .parquet: out = [ParquetRenderer.self]
         case .iwork: out = f.format.iwork == .numbers ? [SpreadsheetRenderer.self, IWorkRenderer.self] : [IWorkRenderer.self]
         case .office: out = [SpreadsheetRenderer.self, OfficeRenderer.self]
         case .quicklook: out = [QuickLookRenderer.self]

@@ -6,7 +6,10 @@ import PerlustraCore
 @MainActor
 final class HexRenderer: NSObject, Renderer, NSTableViewDataSource, NSTableViewDelegate {
     func fallbackNote(for file: FileContext?, reason: String) -> FallbackNote {
-        FallbackNote(message: "这个\(file?.format.label ?? "文件")打不开（文件可能已损坏或不完整），现在显示的是它的原始数据", showsRawContent: true)
+        if file?.format.family == .parquet, !reason.isEmpty {
+            return FallbackNote(message: reason + "；现在显示的是文件的原始数据", showsRawContent: true)
+        }
+        return FallbackNote(message: "这个\(file?.format.label ?? "文件")打不开（文件可能已损坏或不完整），现在显示的是它的原始数据", showsRawContent: true)
     }
 
     static let engineName = "Hex"

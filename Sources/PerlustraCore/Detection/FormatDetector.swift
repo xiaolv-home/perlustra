@@ -104,6 +104,7 @@ public enum FormatDetector {
         }
         if T.html.contains(ext) { return make(.html, "HTML 网页", lang: "html") }
         if T.sqlite.contains(ext) { return make(.sqlite, "SQLite 数据库") }
+        if T.parquet.contains(ext) { return make(.parquet, "Parquet 数据表") }
         if T.font.contains(ext) { return make(.font, "\(token) 字体") }
         if let k = T.iwork[ext] {
             var f = make(.iwork, "\(k.appName) 文稿"); f.iwork = k; return f
@@ -148,6 +149,7 @@ public enum FormatDetector {
         }
 
         if ascii(0, "%PDF-") { return m(.pdf, "PDF", "PDF 文档") }
+        if ascii(0, "PAR1") || ascii(0, "PARE") { return m(.parquet, "PARQUET", "Parquet 数据表") }
         if at(0, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return m(.image, "PNG", "PNG 图像") }
         if at(0, [0xFF, 0xD8, 0xFF]) { return m(.image, "JPEG", "JPEG 图像") }
         if ascii(0, "GIF87a") || ascii(0, "GIF89a") { return m(.image, "GIF", "GIF 图像") }

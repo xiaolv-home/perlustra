@@ -36,8 +36,13 @@ requests are served from the copies listed above.
 
   Vditor 4.0.1 (incl. Lute)       MIT               (c) 2019-present B3log 开源, b3log.org
 
-The app links only to system frameworks and to libarchive as shipped with macOS
-(BSD-2-Clause). It ships no GPL, LGPL or AGPL code.
+The app links to system frameworks and libarchive as shipped with macOS (BSD-2-Clause).
+Parquet preview also bundles the official universal macOS libduckdb 1.5.4 binary,
+loaded on demand, under the MIT License (DuckDB contributors).
+Source and binary: https://github.com/duckdb/duckdb/releases/tag/v1.5.4
+The DuckDB license and its bundled third-party license texts are in Resources/licenses
+(copied to Contents/Resources/licenses in the application). Download hashes are pinned
+in scripts/duckdb.sh. It ships no GPL, LGPL or AGPL code.
 
 
 == Optional runtime ==

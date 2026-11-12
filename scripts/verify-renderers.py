@@ -22,6 +22,9 @@ EXPECT = {
     "data/config.json": "JSON", "data/minified.json": "JSON", "data/events.jsonl": "TextKit", "data/broken.json": "TextKit",
     "data/binary.plist": "Plist", "data/xml.plist": "Plist",
     "data/demo.sqlite": "SQLite",
+    **{f"parquet/sample-{codec}.parquet": "Parquet" for codec in ("none", "snappy", "gzip", "zstd", "brotli", "lz4")},
+    **{f"parquet/{name}.parquet": "Parquet" for name in ("empty", "multi-group", "wide", "long-cell", "byte-stream")},
+    **{f"parquet/{name}.parquet": "Hex" for name in ("truncated", "broken-footer", "encrypted", "unsupported-encoding")},
     "data/sales-utf8.csv": "表格", "data/sales-gbk.csv": "表格", "data/table.tsv": "表格", "data/large-200k.csv": "表格",
     "office/sales.xlsx": "表格", "office/stock.ods": "表格", "office/report-styled.xlsx": "表格", "office/charts.xlsx": "表格", "office/rich-text.xlsx": "表格",
     "images/photo.jpg": "ImageIO", "images/exif-camera.jpg": "ImageIO", "images/orientation-6.jpg": "ImageIO",
@@ -81,6 +84,13 @@ for f in files:
     d = results.get(Path(f).name)
     exp = EXPECT[f]
     good = d is not None and acceptable(f, exp, d) and (f not in MISMATCH or d["mismatch"])
+    if good and f.startswith("parquet/"):
+        # A metadata-only placeholder must not pass as a working table preview.
+        if exp == "Parquet":
+            expected_rows = {"empty": "0", "multi-group": "513", "wide": "1", "long-cell": "2"}.get(Path(f).stem, "3")
+            good = d["status"].startswith(expected_rows + " 行") and "只读" in d["status"]
+        else:
+            good = any("Parquet" in failure for failure in d.get("failures", []))
     ok += good
     fail += not good
     mark = "✔" if good else "✘"

@@ -3,6 +3,7 @@
 # default search path, so point the compiler and the runtime at it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/duckdb.sh
 source scripts/sdk.sh
 F="$DEV/Library/Developer/Frameworks"
 L="$DEV/Library/Developer/usr/lib"

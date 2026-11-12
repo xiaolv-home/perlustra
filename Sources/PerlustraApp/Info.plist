@@ -12,6 +12,16 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>Parquet 数据表</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array><string>org.apache.parquet</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>PDF 文档</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
@@ -280,6 +290,21 @@
 	<true/>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.apache.parquet</string>
+			<key>UTTypeDescription</key>
+			<string>Parquet 数据表</string>
+			<key>UTTypeConformsTo</key>
+			<array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array><string>parquet</string><string>parq</string></array>
+				<key>public.mime-type</key>
+				<string>application/vnd.apache.parquet</string>
+			</dict>
+		</dict>
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>
