@@ -1,4 +1,5 @@
 import AppKit
+import PerlustraCore
 
 /// The sidebar's file actions: they keep the open tabs in step with what happens on disk.
 extension ViewerWindowController {
@@ -132,5 +133,86 @@ extension ViewerWindowController {
             }
         }
         alert.window.initialFirstResponder = field
+    }
+
+    func compressFromSidebar(_ url: URL, format: ArchiveOutputFormat) {
+        let dest = ArchiveWriter.suggestedArchiveURL(for: [url], format: format)
+        var task: Task<Void, Never>?
+        task = Task { [weak self] in
+            guard let self else { return }
+            self.model.showNotice(
+                "正在压缩「\(url.lastPathComponent)」…",
+                style: .info,
+                action: NoticeAction(title: "取消") { task?.cancel() }
+            )
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ArchiveWriter.compress(
+                        items: [url],
+                        to: dest,
+                        options: ArchiveCompressOptions(format: format),
+                        isCancelled: { Task.isCancelled }
+                    )
+                }.value
+                self.browser.reload()
+                self.model.showNotice(
+                    "已生成「\(result.archiveURL.lastPathComponent)」（\(Fmt.bytes(result.archiveBytes))）",
+                    style: .success,
+                    action: NoticeAction(title: "在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([result.archiveURL])
+                    }
+                )
+            } catch ArchiveOperationError.cancelled {
+                self.model.showNotice("已取消压缩", style: .info, action: nil)
+            } catch {
+                self.model.showNotice(
+                    (error as? LocalizedError)?.errorDescription ?? "压缩失败：\(error.localizedDescription)",
+                    style: .warning,
+                    action: nil
+                )
+            }
+        }
+    }
+
+    func extractFromSidebar(_ url: URL) {
+        let destFolder = url.deletingLastPathComponent()
+        var task: Task<Void, Never>?
+        task = Task { [weak self] in
+            guard let self else { return }
+            self.model.showNotice(
+                "正在解压「\(url.lastPathComponent)」…",
+                style: .info,
+                action: NoticeAction(title: "取消") { task?.cancel() }
+            )
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ArchiveExtractor.extract(
+                        archiveURL: url,
+                        to: destFolder,
+                        options: ArchiveExtractOptions(smartWrap: true),
+                        isCancelled: { Task.isCancelled }
+                    )
+                }.value
+                self.browser.reload()
+                var msg = "已解压 \(Fmt.number(result.extractedFiles)) 个文件（\(Fmt.bytes(result.totalBytes))）"
+                if result.skippedUnsafe > 0 { msg += "，拦截 \(result.skippedUnsafe) 个不安全路径" }
+                if result.skippedEncrypted > 0 { msg += "，跳过 \(result.skippedEncrypted) 个加密项" }
+                self.model.showNotice(
+                    msg,
+                    style: result.skippedUnsafe > 0 || result.skippedEncrypted > 0 ? .warning : .success,
+                    action: NoticeAction(title: "在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
+                    }
+                )
+            } catch ArchiveOperationError.cancelled {
+                self.model.showNotice("已取消解压", style: .info, action: nil)
+            } catch {
+                self.model.showNotice(
+                    (error as? LocalizedError)?.errorDescription ?? "解压失败：\(error.localizedDescription)",
+                    style: .warning,
+                    action: nil
+                )
+            }
+        }
     }
 }

@@ -37,7 +37,7 @@
 | 数据 | parquet、parq | 内置 DuckDB | 离线只读预览，显示字段名、类型、总行数和行组数；前 200 行、最多 256 列，选中行 ⌘C 复制；支持 Snappy/Gzip/Zstd/Brotli/LZ4 和无压缩，长整数、小数、日期、列表与结构体 |
 | 网页 | html、htm、xhtml | WebKit（禁用 JavaScript） | 远程资源拦截；可切换源码 |
 | 字体 | ttf、otf、ttc、woff、woff2、dfont | CoreText | 字体样张、自定义预览文字、字符集网格、字面切换、字体信息（不会安装字体） |
-| 压缩包 | zip、7z、rar、tar、gz/tgz、bz2、xz、zst、lz4、iso、cpio、xar/pkg、jar/apk、deb、rpm、cab… | 系统 libarchive | 只列目录结构，不解压；中文（GBK）文件名不乱码 |
+| 压缩包 | zip、7z、rar、tar、gz/tgz、bz2、xz、zst、lz4、iso、cpio、xar/pkg、jar/apk、deb、rpm、cab… | 系统 libarchive | 默认只列目录结构；支持全部解压 / 解压到指定目录 / 仅解压选中项（防路径穿越、防软链接逃逸、防炸桌面、进度可取消），双击包内文件可临时预览（关闭标签自动清理）；侧栏右键支持将文件或文件夹压缩为 ZIP / tar.gz（自动过滤 `.DS_Store`）；中文（GBK）文件名不乱码 |
 | 文件夹 | 任意文件夹 / 软件包 | | 可展开浏览，双击打开文件 |
 | 其他 | usdz、epub、vcf、ics、eml… | Quick Look | |
 | 兜底 | 任何未知或二进制文件 | 十六进制查看器 | 文件信息与十六进制视图 |

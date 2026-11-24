@@ -91,6 +91,10 @@ final class AppDelegate: NSObject, AppActions, NSApplicationDelegate, NSMenuDele
         next(0)
         return .terminateLater
     }
+    func applicationWillTerminate(_ notification: Notification) {
+        ArchivePreviewCache.shared.cleanupAll()
+    }
+
     func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool { true }
     func applicationShouldRestoreApplicationState(_ app: NSApplication) -> Bool { false }
 

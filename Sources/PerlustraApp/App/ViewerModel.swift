@@ -93,10 +93,13 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
             window?.title = url.lastPathComponent
             window?.representedURL = url
         }
-        browser?.reveal(url)
-        if !AppEnvironment.isScripted {
-            NSDocumentController.shared.noteNewRecentDocumentURL(url)
-            RecentFiles.add(url)
+        let isArchivePreview = ArchivePreviewCache.shared.isPreviewFile(url)
+        if !isArchivePreview {
+            browser?.reveal(url)
+            if !AppEnvironment.isScripted {
+                NSDocumentController.shared.noteNewRecentDocumentURL(url)
+                RecentFiles.add(url)
+            }
         }
 
         loadTask = Task { [weak self] in
@@ -192,6 +195,9 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
     /// How the file came to be shown this way (in 简介 rather than as a banner).
     private func openingNotes(_ r: Renderer) -> [InfoSection] {
         var items: [InfoItem] = []
+        if let f = file, let src = ArchivePreviewCache.shared.previewSource(for: f.url) {
+            items.append(InfoItem("压缩包预览", "来自「\(src.archiveName)」中的 \(src.entryPath)，关闭标签后自动清理"))
+        }
         if !failures.isEmpty { items.append(InfoItem("显示方式", fallbackNote(shownBy: r).message)) }
         if let f = file, f.format.extensionMismatch {
             items.append(InfoItem("扩展名", ".\(f.ext.isEmpty ? "（无）" : f.ext) 与实际内容不符，按「\(f.format.label)」打开"))
@@ -219,12 +225,16 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
     }
 
     func close() {
+        let closingURL = file?.url
         loadGeneration += 1
         loadTask?.cancel()
         teardownRenderer()
         file = nil
         loading = nil
         notice = nil
+        if let closingURL, ArchivePreviewCache.shared.isPreviewFile(closingURL) {
+            ArchivePreviewCache.shared.release(closingURL)
+        }
     }
 
     func cancelLoading() {

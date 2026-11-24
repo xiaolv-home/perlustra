@@ -123,6 +123,16 @@ private struct SidebarContent: View {
             NSPasteboard.general.setString(item.url.path, forType: .string)
         }
         Divider()
+        if !item.isFolder && ArchivePathSafety.isArchiveFilename(item.name) {
+            Button("解压到当前文件夹") { model.windowController?.extractFromSidebar(item.url) }
+                .disabled(!browser.canCreateFiles)
+        }
+        Menu("压缩") {
+            Button("压缩为 ZIP") { model.windowController?.compressFromSidebar(item.url, format: .zip) }
+            Button("压缩为 tar.gz") { model.windowController?.compressFromSidebar(item.url, format: .tarGz) }
+        }
+        .disabled(!browser.canCreateFiles)
+        Divider()
         Button("重命名…") { model.windowController?.renameFromSidebar(item.url) }
         Button("创建副本") { model.windowController?.duplicateFromSidebar(item.url) }
         Button("移到废纸篓（⌘⌫）", role: .destructive) { model.windowController?.trashFromSidebar(item.url, isFolder: item.isFolder) }

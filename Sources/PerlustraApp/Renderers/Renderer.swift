@@ -112,6 +112,7 @@ protocol RenderHost: AnyObject {
     /// Re-read info/status/controls after the renderer changed them.
     func rendererDidUpdate()
     func open(_ url: URL)
+    func openInNewTab(_ url: URL)
 }
 
 struct Notice: Identifiable {

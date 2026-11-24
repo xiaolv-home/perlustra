@@ -7,6 +7,8 @@ import PerlustraCore
 final class FileNode {
     let name: String
     let isDirectory: Bool
+    /// Normalized path inside an archive (e.g. `docs/readme.md`), `nil` for live filesystem trees.
+    var entryPath: String?
     var size: Int64?
     var modified: Date?
     var encrypted = false
@@ -15,9 +17,17 @@ final class FileNode {
     private var loader: (() -> [FileNode])?
     var childMap: [String: FileNode] = [:]
 
-    init(name: String, isDirectory: Bool, size: Int64? = nil, modified: Date? = nil, loader: (() -> [FileNode])? = nil) {
+    init(
+        name: String,
+        isDirectory: Bool,
+        entryPath: String? = nil,
+        size: Int64? = nil,
+        modified: Date? = nil,
+        loader: (() -> [FileNode])? = nil
+    ) {
         self.name = name
         self.isDirectory = isDirectory
+        self.entryPath = entryPath
         self.size = size
         self.modified = modified
         self.loader = loader
@@ -61,18 +71,31 @@ final class FileNode {
             let parts = e.path.split(separator: "/").map(String.init).filter { $0 != "." }
             guard !parts.isEmpty else { continue }
             var cur = root
+            var prefixParts: [String] = []
             for (i, p) in parts.enumerated() {
+                prefixParts.append(p)
                 let last = i == parts.count - 1
+                let relPath = prefixParts.joined(separator: "/")
                 if let existing = cur.childMap[p] {
                     cur = existing
-                    if last && !e.isDirectory { cur.size = e.size; cur.modified = e.modified }
+                    if last && !e.isDirectory {
+                        cur.size = e.size
+                        cur.modified = e.modified
+                        cur.entryPath = relPath
+                    }
                     continue
                 }
                 let node = FileNode(
-                    name: p, isDirectory: !last || e.isDirectory,
+                    name: p,
+                    isDirectory: !last || e.isDirectory,
+                    entryPath: relPath,
                     size: last && !e.isDirectory ? e.size : nil,
-                    modified: last ? e.modified : nil)
-                if last { node.encrypted = e.isEncrypted; node.isSymlink = e.isSymlink }
+                    modified: last ? e.modified : nil
+                )
+                if last {
+                    node.encrypted = e.isEncrypted
+                    node.isSymlink = e.isSymlink
+                }
                 cur.add(node)
                 cur = node
             }
@@ -84,15 +107,17 @@ final class FileNode {
 }
 
 /// Outline listing name / size / modified / kind for a FileNode tree.
-final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate {
+final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
     let outline = NSOutlineView()
     let root: FileNode
     var onOpen: ((FileNode) -> Void)?
+    var onSelectionChange: (([FileNode]) -> Void)?
+    var contextMenuBuilder: (([FileNode]) -> NSMenu?)?
     private let dateFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"; return f
     }()
 
-    init(root: FileNode) {
+    init(root: FileNode, allowsMultipleSelection: Bool = false) {
         self.root = root
         super.init(frame: .zero)
         for (id, title, w) in [("n", "名称", 360.0), ("s", "大小", 90.0), ("d", "修改日期", 140.0), ("k", "种类", 140.0)] {
@@ -109,11 +134,16 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         outline.rowHeight = 22
         outline.backgroundColor = Theme.sheet
         outline.usesAlternatingRowBackgroundColors = false
+        outline.allowsMultipleSelection = allowsMultipleSelection
         outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         outline.dataSource = self
         outline.delegate = self
         outline.target = self
         outline.doubleAction = #selector(doubleClicked)
+        let menu = NSMenu()
+        menu.delegate = self
+        outline.menu = menu
+
         let s = NSScrollView()
         s.documentView = outline
         s.hasVerticalScroller = true
@@ -131,11 +161,50 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func detach() { outline.dataSource = nil; outline.delegate = nil }
+    func detach() {
+        outline.dataSource = nil
+        outline.delegate = nil
+        outline.menu?.delegate = nil
+        onOpen = nil
+        onSelectionChange = nil
+        contextMenuBuilder = nil
+    }
+
+    var selectedNodes: [FileNode] {
+        outline.selectedRowIndexes.compactMap { outline.item(atRow: $0) as? FileNode }
+    }
 
     func outlineView(_ o: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int { ((item as? FileNode) ?? root).children.count }
     func outlineView(_ o: NSOutlineView, child index: Int, ofItem item: Any?) -> Any { ((item as? FileNode) ?? root).children[index] }
     func outlineView(_ o: NSOutlineView, isItemExpandable item: Any) -> Bool { (item as? FileNode)?.isDirectory ?? false }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        onSelectionChange?(selectedNodes)
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let builder = contextMenuBuilder else { return }
+        let clicked = outline.clickedRow
+        let targets: [FileNode]
+        if clicked >= 0 {
+            if outline.selectedRowIndexes.contains(clicked) {
+                targets = selectedNodes
+            } else if let node = outline.item(atRow: clicked) as? FileNode {
+                outline.selectRowIndexes(IndexSet(integer: clicked), byExtendingSelection: false)
+                targets = [node]
+            } else {
+                targets = []
+            }
+        } else {
+            targets = selectedNodes
+        }
+        guard let built = builder(targets) else { return }
+        for item in built.items {
+            built.removeItem(item)
+            menu.addItem(item)
+        }
+    }
 
     @objc private func doubleClicked() {
         guard let n = outline.item(atRow: outline.clickedRow) as? FileNode else { return }
@@ -203,23 +272,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     }
 }
 
-private struct TreeHeader: View {
-    let title: String
-    let detail: String
-    let note: String?
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(title).font(.system(size: 12, weight: .semibold))
-            Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer()
-            if let note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.ember) }
-        }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color(nsColor: Theme.hairline)).frame(height: 0.5) }
-    }
-}
-
-private func stack(header: NSView, body: NSView) -> NSView {
+func stackTreeView(header: NSView, body: NSView) -> NSView {
     let v = NSView()
     for x in [header, body] { x.translatesAutoresizingMaskIntoConstraints = false; v.addSubview(x) }
     NSLayoutConstraint.activate([
@@ -231,21 +284,27 @@ private func stack(header: NSView, body: NSView) -> NSView {
     return v
 }
 
-/// Lists archive contents through libarchive without extracting anything.
+/// Lists archive contents through libarchive, with on-demand safe extraction and single-file preview.
 @MainActor
 final class ArchiveRenderer: Renderer {
     static let engineName = "libarchive"
     static func canHandle(_ file: FileContext) -> Bool { !file.isDirectory }
 
     private var tree: FileTreeView?
+    private var headerModel: ArchiveHeaderModel?
+    private weak var host: RenderHost?
+    private var archiveURL: URL?
     private var listing: ArchiveListing?
+    private var activeTask: Task<Void, Never>?
     private var fileCount = 0
     private var dirCount = 0
 
     required init() {}
 
     func makeView(for file: FileContext, host: RenderHost) async throws -> NSView {
+        self.host = host
         let url = file.url
+        self.archiveURL = url
         host.reportProgress(nil, label: "正在读取目录…")
         let l: ArchiveListing
         do {
@@ -268,9 +327,11 @@ final class ArchiveRenderer: Renderer {
         listing = l
         fileCount = l.entries.filter { !$0.isDirectory }.count
         dirCount = l.entries.count - fileCount
+
         let root = FileNode.tree(from: l.entries)
-        let t = FileTreeView(root: root)
+        let t = FileTreeView(root: root, allowsMultipleSelection: true)
         tree = t
+
         var note: String?
         if l.truncated {
             note = "条目过多，仅列出前 \(Fmt.number(ArchiveReader.maxEntries)) 项"
@@ -279,18 +340,45 @@ final class ArchiveRenderer: Renderer {
         } else if l.entries.contains(where: { $0.isEncrypted }) {
             note = "包含加密条目"
         }
-        let header = NSHostingView(
-            rootView: TreeHeader(
-                title: l.formatName.uppercased() + (l.filterName.isEmpty ? "" : " · \(l.filterName)"),
-                detail: "\(Fmt.number(fileCount)) 个文件 · 解压后约 \(Fmt.bytes(root.size ?? 0))",
-                note: note))
+
+        let hm = ArchiveHeaderModel(
+            title: l.formatName.uppercased() + (l.filterName.isEmpty ? "" : " · \(l.filterName)"),
+            detail: "\(Fmt.number(fileCount)) 个文件 · 解压后约 \(Fmt.bytes(root.size ?? 0))",
+            note: note
+        )
+        hm.onExtractHere = { [weak self] in self?.extractHere(selectedPaths: nil) }
+        hm.onExtractTo = { [weak self] in self?.chooseDestinationAndExtract(selectedPaths: nil) }
+        hm.onExtractSelected = { [weak self] in self?.extractSelectedHere() }
+        hm.onPreviewSelected = { [weak self] in
+            guard let self, let node = self.tree?.selectedNodes.first, !node.isDirectory else { return }
+            self.preview(node: node)
+        }
+        hm.onCancel = { [weak self] in self?.activeTask?.cancel() }
+        headerModel = hm
+
+        t.onSelectionChange = { [weak self] nodes in
+            guard let self, let hm = self.headerModel else { return }
+            hm.selectedCount = nodes.count
+            hm.canPreviewSelected = nodes.count == 1 && !nodes[0].isDirectory && !nodes[0].encrypted && !nodes[0].isSymlink
+        }
+        t.onOpen = { [weak self] node in self?.preview(node: node) }
+        t.contextMenuBuilder = { [weak self] nodes in self?.buildContextMenu(for: nodes) }
+
+        let header = RendererHostingView(ArchiveHeaderView(model: hm))
         header.sizingOptions = [.intrinsicContentSize]
-        return stack(header: header, body: t)
+        return stackTreeView(header: header, body: t)
     }
 
-    func cleanup() { tree?.detach(); tree = nil }
+    func cleanup() {
+        activeTask?.cancel()
+        activeTask = nil
+        headerModel?.detach()
+        headerModel = nil
+        tree?.detach()
+        tree = nil
+    }
 
-    var statusText: String { "\(Fmt.number(fileCount)) 个文件 · \(Fmt.number(dirCount)) 个文件夹" }
+    var statusText: String { "\(Fmt.number(fileCount)) 个文件 · \(Fmt.number(dirCount)) 个文件夹 · 双击文件可临时预览" }
     var infoSections: [InfoSection] {
         guard let l = listing else { return [] }
         var items = [
@@ -302,55 +390,164 @@ final class ArchiveRenderer: Renderer {
         return [InfoSection("压缩包", items)]
     }
     var initialFirstResponder: NSView? { tree?.outline }
-}
 
-/// Folders (and non-document packages) are shown as a browsable tree; double-click opens a file.
-@MainActor
-final class DirectoryRenderer: Renderer {
-    static let engineName = "Folder"
-    static func canHandle(_ file: FileContext) -> Bool { file.isDirectory }
+    // MARK: Actions
 
-    private var tree: FileTreeView?
-    private var count = 0
-
-    required init() {}
-
-    nonisolated static func children(of url: URL) -> [FileNode] {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .isPackageKey]
-        let items = (try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
-        return items.map { u in
-            let rv = try? u.resourceValues(forKeys: Set(keys))
-            let dir = (rv?.isDirectory ?? false) && !(rv?.isPackage ?? false)
-            return FileNode(
-                name: u.lastPathComponent, isDirectory: dir, size: rv?.fileSize.map(Int64.init), modified: rv?.contentModificationDate,
-                loader: dir ? { DirectoryRenderer.children(of: u) } : nil)
+    private func buildContextMenu(for nodes: [FileNode]) -> NSMenu? {
+        guard !nodes.isEmpty else { return nil }
+        let menu = NSMenu()
+        if nodes.count == 1, let single = nodes.first, !single.isDirectory {
+            let previewItem = NSMenuItem(title: "在新标签页中预览", action: #selector(contextPreview), keyEquivalent: "")
+            previewItem.target = self
+            previewItem.isEnabled = !single.encrypted && !single.isSymlink
+            menu.addItem(previewItem)
+            menu.addItem(.separator())
         }
-        .sorted { a, b in
-            if a.isDirectory != b.isDirectory { return a.isDirectory }
-            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        let hereItem = NSMenuItem(title: "解压选中项到当前文件夹", action: #selector(contextExtractSelectedHere), keyEquivalent: "")
+        hereItem.target = self
+        menu.addItem(hereItem)
+
+        let pickItem = NSMenuItem(title: "解压选中项到…", action: #selector(contextExtractSelectedTo), keyEquivalent: "")
+        pickItem.target = self
+        menu.addItem(pickItem)
+        return menu
+    }
+
+    @objc private func contextPreview() {
+        guard let node = tree?.selectedNodes.first, !node.isDirectory else { return }
+        preview(node: node)
+    }
+
+    @objc private func contextExtractSelectedHere() { extractSelectedHere() }
+
+    @objc private func contextExtractSelectedTo() {
+        let paths = selectedEntryPaths()
+        guard !paths.isEmpty else { return }
+        chooseDestinationAndExtract(selectedPaths: paths)
+    }
+
+    private func selectedEntryPaths() -> Set<String> {
+        Set((tree?.selectedNodes ?? []).compactMap(\.entryPath))
+    }
+
+    private func extractSelectedHere() {
+        let paths = selectedEntryPaths()
+        guard !paths.isEmpty else { return }
+        extractHere(selectedPaths: paths)
+    }
+
+    private func extractHere(selectedPaths: Set<String>?) {
+        guard let archiveURL else { return }
+        let dest = archiveURL.deletingLastPathComponent()
+        runExtraction(to: dest, selectedPaths: selectedPaths)
+    }
+
+    private func chooseDestinationAndExtract(selectedPaths: Set<String>?) {
+        guard let archiveURL else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = archiveURL.deletingLastPathComponent()
+        panel.prompt = "解压到这里"
+        let handle: (NSApplication.ModalResponse) -> Void = { [weak self] resp in
+            guard resp == .OK, let folder = panel.url else { return }
+            self?.runExtraction(to: folder, selectedPaths: selectedPaths)
+        }
+        if let win = host?.window {
+            panel.beginSheetModal(for: win, completionHandler: handle)
+        } else {
+            handle(panel.runModal())
         }
     }
 
-    func makeView(for file: FileContext, host: RenderHost) async throws -> NSView {
-        let url = file.url
-        let kids = await Task.detached { DirectoryRenderer.children(of: url) }.value
-        count = kids.count
-        let root = FileNode(name: url.lastPathComponent, isDirectory: true, loader: { kids })
-        let t = FileTreeView(root: root)
-        t.onOpen = { [weak host] n in
-            // Resolve the node's path by walking the outline parents.
-            var parts = [n.name]
-            var item: Any? = t.outline.parent(forItem: n)
-            while let p = item as? FileNode { parts.insert(p.name, at: 0); item = t.outline.parent(forItem: p) }
-            host?.open(parts.reduce(url) { $0.appendingPathComponent($1) })
+    private func runExtraction(to folder: URL, selectedPaths: Set<String>?) {
+        guard let archiveURL, activeTask == nil else { return }
+        headerModel?.busyLabel = "正在解压…"
+        let options = ArchiveExtractOptions(
+            selectedPaths: selectedPaths,
+            smartWrap: selectedPaths == nil
+        )
+        activeTask = Task { [weak self] in
+            defer {
+                self?.activeTask = nil
+                self?.headerModel?.busyLabel = nil
+            }
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ArchiveExtractor.extract(
+                        archiveURL: archiveURL,
+                        to: folder,
+                        options: options,
+                        progress: { p in
+                            Task { @MainActor [weak self] in
+                                self?.headerModel?.busyLabel = "已解压 \(p.completedFiles) 个文件…"
+                            }
+                        },
+                        isCancelled: { Task.isCancelled }
+                    )
+                }.value
+                guard let self else { return }
+                var summary = "已解压 \(Fmt.number(result.extractedFiles)) 个文件（\(Fmt.bytes(result.totalBytes))）"
+                if result.skippedEncrypted > 0 {
+                    summary += "，跳过 \(result.skippedEncrypted) 个加密项"
+                }
+                if result.skippedUnsafe > 0 {
+                    summary += "，拦截 \(result.skippedUnsafe) 个不安全路径"
+                }
+                self.host?.showNotice(
+                    summary,
+                    style: result.skippedEncrypted > 0 || result.skippedUnsafe > 0 ? .warning : .success,
+                    action: NoticeAction(title: "在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
+                    }
+                )
+            } catch ArchiveOperationError.cancelled {
+                self?.host?.showNotice("已取消解压", style: .info, action: nil)
+            } catch {
+                self?.host?.showNotice(
+                    (error as? LocalizedError)?.errorDescription ?? "解压失败：\(error.localizedDescription)",
+                    style: .warning,
+                    action: nil
+                )
+            }
         }
-        tree = t
-        let header = NSHostingView(rootView: TreeHeader(title: url.lastPathComponent, detail: "\(count) 项 · 双击文件即可查看", note: nil))
-        header.sizingOptions = [.intrinsicContentSize]
-        return stack(header: header, body: t)
     }
 
-    func cleanup() { tree?.detach(); tree = nil }
-    var statusText: String { "\(count) 项" }
-    var initialFirstResponder: NSView? { tree?.outline }
+    private func preview(node: FileNode) {
+        guard let archiveURL, let entryPath = node.entryPath, activeTask == nil else { return }
+        if node.encrypted {
+            host?.showNotice("「\(node.name)」已加密，无法直接预览", style: .warning, action: nil)
+            return
+        }
+        if node.isSymlink {
+            host?.showNotice("出于安全，不直接预览压缩包里的符号链接", style: .warning, action: nil)
+            return
+        }
+        headerModel?.busyLabel = "正在提取预览…"
+        activeTask = Task { [weak self] in
+            defer {
+                self?.activeTask = nil
+                self?.headerModel?.busyLabel = nil
+            }
+            do {
+                let previewURL = try await Task.detached(priority: .userInitiated) {
+                    try ArchivePreviewCache.shared.extractForPreview(
+                        archiveURL: archiveURL,
+                        entryPath: entryPath,
+                        isCancelled: { Task.isCancelled }
+                    )
+                }.value
+                self?.host?.openInNewTab(previewURL)
+            } catch ArchiveOperationError.cancelled {
+                // User cancelled; no banner needed.
+            } catch {
+                self?.host?.showNotice(
+                    (error as? LocalizedError)?.errorDescription ?? "无法预览：\(error.localizedDescription)",
+                    style: .warning,
+                    action: nil
+                )
+            }
+        }
+    }
 }
