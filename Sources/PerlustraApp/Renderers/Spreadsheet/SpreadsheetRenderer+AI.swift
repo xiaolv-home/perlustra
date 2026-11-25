@@ -267,13 +267,16 @@ extension SpreadsheetRenderer: AIDocumentTools {
         rows = rows.filter { r in !(groups + values).allSatisfy { s.cell(r, $0).isEmpty } }
         let table = SheetSummary.groupBy(s, rows: rows, header: query.headerRowIndex, groupColumns: groups, valueColumns: values, aggregate: agg)
         var text = "分组汇总\(condition)，共 \(table.count - (groups.isEmpty ? 1 : 2)) 组：\n" + SheetSummary.tsv(table, limit: 200)
+        var created: [URL] = []
         if let path = args["save_as"]?.string, !path.isEmpty {
             switch AIFiles.writeTable([(name: "汇总", rows: table)], to: path, near: file?.url) {
-            case .success(let url): text += "\n\n已另存为 \(url.path)"; AIFiles.announce(url)
+            case .success(let url):
+                text += "\n\n已另存为 \(url.path)"
+                created.append(url)
             case .failure(let e): return .error(text + "\n\n另存失败：\(e.message)")
             }
         }
-        return AIToolOutput(text)
+        return AIToolOutput(text, createdFiles: created)
     }
 
     private func addColumn(_ args: AIJSON) async -> AIToolOutput {
@@ -313,7 +316,7 @@ extension SpreadsheetRenderer: AIDocumentTools {
         let cols = gridVisibleColumns()
         let rows: [[CellValue]] = visible.map { r in cols.map { sheet.cell(r, $0) } }
         switch AIFiles.writeTable([(name: sheet.name, rows: rows)], to: path, near: file?.url) {
-        case .success(let url): AIFiles.announce(url); return AIToolOutput("已导出 \(Fmt.number(rows.count)) 行到 \(url.path)")
+        case .success(let url): return AIToolOutput("已导出 \(Fmt.number(rows.count)) 行到 \(url.path)", createdFiles: [url])
         case .failure(let e): return .error(e.message)
         }
     }

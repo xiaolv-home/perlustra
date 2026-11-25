@@ -33,8 +33,7 @@ enum DocumentExporter {
     }
 
     static var cacheDir: URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        let dir = base.appendingPathComponent("app.loupe.viewer/exports", isDirectory: true)
+        let dir = AppPaths.exportsCache
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -127,15 +126,24 @@ enum DocumentExporter {
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", src]
             let errPipe = Pipe()
+            let errBuf = PipeCollector()
+            errPipe.fileHandleForReading.readabilityHandler = { h in errBuf.append(h.availableData) }
             p.standardError = errPipe
-            p.standardOutput = Pipe()
+            p.standardOutput = FileHandle.nullDevice
             try p.run()
             let deadline = Date().addingTimeInterval(timeout)
             while p.isRunning {
-                if Task.isCancelled || Date() > deadline { p.terminate(); throw Task.isCancelled ? CancellationError() : ExportError.timeout }
+                if Task.isCancelled || Date() > deadline {
+                    p.terminate()
+                    errPipe.fileHandleForReading.readabilityHandler = nil
+                    throw Task.isCancelled ? CancellationError() : ExportError.timeout
+                }
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
-            let err = String(decoding: errPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            errPipe.fileHandleForReading.readabilityHandler = nil
+            errBuf.append(errPipe.fileHandleForReading.readDataToEndOfFile())
+            let err = String(decoding: errBuf.data, as: UTF8.self)
             if p.terminationStatus != 0 {
                 Log.write("export \(url.lastPathComponent) with \(bundleID) failed: \(err)")
                 if err.contains("-1743") || err.contains("Not authorized") || err.contains("不允许") { throw ExportError.notAuthorized }

@@ -15,7 +15,7 @@ private struct SidebarContent: View {
     @ObservedObject var model: ViewerModel
     @ObservedObject var browser: FolderBrowser
     @State private var filter = ""
-    @State private var selection: URL?
+    @State private var selection: Set<URL> = []
     @State private var cameFrom: URL?
     /// A folder just opened whose list has not arrived yet.
     @State private var arrived: URL?
@@ -79,10 +79,11 @@ private struct SidebarContent: View {
     private var keyedList: some View {
         fileList
             .onKeyPress(.return) {
-                if let u = selection { activate(u) }; return .handled
+                if selection.count == 1, let u = selection.first { activate(u) }
+                return .handled
             }
             .onKeyPress(.rightArrow) {
-                guard let u = selection, isFolder(u) else { return .ignored }
+                guard selection.count == 1, let u = selection.first, isFolder(u) else { return .ignored }
                 activate(u)
                 return .handled
             }
@@ -91,8 +92,12 @@ private struct SidebarContent: View {
             }
             // ⌘⌫, as in Finder.
             .onKeyPress(keys: [.delete], phases: .down) { press in
-                guard press.modifiers.contains(.command), let u = selection else { return .ignored }
-                model.windowController?.trashFromSidebar(u, isFolder: isFolder(u))
+                guard press.modifiers.contains(.command), !selection.isEmpty else { return .ignored }
+                if selection.count == 1, let u = selection.first {
+                    model.sidebarHost?.trashFromSidebar(u, isFolder: isFolder(u))
+                } else {
+                    model.sidebarHost?.trashItemsFromSidebar(Array(selection))
+                }
                 return .handled
             }
             .overlay {
@@ -103,11 +108,28 @@ private struct SidebarContent: View {
     }
 
     @ViewBuilder private func contextMenu(for urls: Set<URL>) -> some View {
-        if let url = urls.first, let item = browser.items.first(where: { $0.url == url }) {
+        if urls.count > 1 {
+            multiItemMenu(urls)
+            Divider()
+        } else if let url = urls.first, let item = browser.items.first(where: { $0.url == url }) {
             itemMenu(item)
             Divider()
         }
         folderMenu
+    }
+
+    @ViewBuilder private func multiItemMenu(_ urls: Set<URL>) -> some View {
+        let sorted = urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        Button("在 Finder 中显示（\(sorted.count) 项）") { NSWorkspace.shared.activateFileViewerSelecting(sorted) }
+        Menu("压缩这 \(sorted.count) 项") {
+            Button("压缩为 ZIP") { model.sidebarHost?.compressItemsFromSidebar(sorted, format: .zip) }
+            Button("压缩为 tar.gz") { model.sidebarHost?.compressItemsFromSidebar(sorted, format: .tarGz) }
+        }
+        .disabled(!browser.canCreateFiles)
+        Divider()
+        Button("把这 \(sorted.count) 项移到废纸篓（⌘⌫）", role: .destructive) {
+            model.sidebarHost?.trashItemsFromSidebar(sorted)
+        }
     }
 
     @ViewBuilder private func itemMenu(_ item: FolderBrowser.Item) -> some View {
@@ -124,23 +146,23 @@ private struct SidebarContent: View {
         }
         Divider()
         if !item.isFolder && ArchivePathSafety.isArchiveFilename(item.name) {
-            Button("解压到当前文件夹") { model.windowController?.extractFromSidebar(item.url) }
+            Button("解压到当前文件夹") { model.sidebarHost?.extractFromSidebar(item.url) }
                 .disabled(!browser.canCreateFiles)
         }
         Menu("压缩") {
-            Button("压缩为 ZIP") { model.windowController?.compressFromSidebar(item.url, format: .zip) }
-            Button("压缩为 tar.gz") { model.windowController?.compressFromSidebar(item.url, format: .tarGz) }
+            Button("压缩为 ZIP") { model.sidebarHost?.compressItemsFromSidebar([item.url], format: .zip) }
+            Button("压缩为 tar.gz") { model.sidebarHost?.compressItemsFromSidebar([item.url], format: .tarGz) }
         }
         .disabled(!browser.canCreateFiles)
         Divider()
-        Button("重命名…") { model.windowController?.renameFromSidebar(item.url) }
-        Button("创建副本") { model.windowController?.duplicateFromSidebar(item.url) }
-        Button("移到废纸篓（⌘⌫）", role: .destructive) { model.windowController?.trashFromSidebar(item.url, isFolder: item.isFolder) }
+        Button("重命名…") { model.sidebarHost?.renameFromSidebar(item.url) }
+        Button("创建副本") { model.sidebarHost?.duplicateFromSidebar(item.url) }
+        Button("移到废纸篓（⌘⌫）", role: .destructive) { model.sidebarHost?.trashFromSidebar(item.url, isFolder: item.isFolder) }
     }
 
     @ViewBuilder private var folderMenu: some View {
         Button("新建 Markdown…") { naming = true }.disabled(!browser.canCreateFiles)
-        Button("新建文件夹…") { model.windowController?.newFolderFromSidebar() }.disabled(!browser.canCreateFiles)
+        Button("新建文件夹…") { model.sidebarHost?.newFolderFromSidebar() }.disabled(!browser.canCreateFiles)
         Divider()
         Button("刷新") { browser.reload() }
     }
@@ -214,7 +236,8 @@ private struct SidebarContent: View {
     }
 
     private func select(_ u: URL?) {
-        if selection != u { selection = u }
+        let next: Set<URL> = u.map { [$0] } ?? []
+        if selection != next { selection = next }
     }
 
     private func isFolder(_ u: URL) -> Bool { browser.items.first { $0.url == u }?.isFolder == true }
@@ -310,8 +333,13 @@ private struct ListRowClicks: NSViewRepresentable {
 
         private func handle(_ e: NSEvent) {
             // One plain click: a double click's second press lands in the folder just opened,
-            // and ⌃-click is the context menu.
-            guard e.clickCount == 1, !e.modifierFlags.contains(.control), let table = findTable(), e.window === table.window else { return }
+            // ⌃-click is the context menu, and ⌘/⇧-click extends selection without opening tabs.
+            guard e.clickCount == 1,
+                !e.modifierFlags.contains(.control),
+                e.modifierFlags.intersection([.command, .shift]).isEmpty,
+                let table = findTable(),
+                e.window === table.window
+            else { return }
             let p = table.convert(e.locationInWindow, from: nil)
             guard table.visibleRect.contains(p) else { return }
             let row = table.row(at: p)

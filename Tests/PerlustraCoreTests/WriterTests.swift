@@ -85,4 +85,35 @@ struct WriterTests {
         #expect(!kept2)
         #expect(try Data(contentsOf: out).prefix(3) == Data([0xEF, 0xBB, 0xBF]))
     }
+
+    @Test("xlsx 表尾连续新增多行时保持 OOXML 行号严格递增")
+    func patchMultipleTrailingRowsInOrder() throws {
+        let file = temp("trailing.xlsx")
+        try XLSXWriter.write(
+            sheets: [(name: "Sheet1", rows: [[.text("A"), .text("B")], [.number(1), .number(2)]], formulas: [:])],
+            to: file
+        )
+        var wb = try SpreadsheetReader.readXLSX(url: file)
+        var s = wb.sheets[0]
+        while s.rows.count <= 15 { s.rows.append([]) }
+        s.rows[10] = [.text("第11行")]
+        s.rows[12] = [.text("第13行")]
+        s.rows[15] = [.text("第16行")]
+        wb.sheets[0] = s
+        let edited: Set<Int> = [Sheet.key(10, 0), Sheet.key(12, 0), Sheet.key(15, 0)]
+        try XLSXPatcher.save(base: file, to: file, workbook: wb, edited: [0: edited])
+
+        let xmlData = try #require(ArchiveReader.extract(url: file, matching: { $0 == "xl/worksheets/sheet1.xml" })?.1)
+        let xml = String(decoding: xmlData, as: UTF8.self)
+        let pos11 = try #require(xml.range(of: "r=\"11\"")?.lowerBound)
+        let pos13 = try #require(xml.range(of: "r=\"13\"")?.lowerBound)
+        let pos16 = try #require(xml.range(of: "r=\"16\"")?.lowerBound)
+        #expect(pos11 < pos13)
+        #expect(pos13 < pos16)
+
+        let back = try SpreadsheetReader.readXLSX(url: file).sheets[0]
+        #expect(back.cell(10, 0) == .text("第11行"))
+        #expect(back.cell(12, 0) == .text("第13行"))
+        #expect(back.cell(15, 0) == .text("第16行"))
+    }
 }

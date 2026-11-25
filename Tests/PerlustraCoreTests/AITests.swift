@@ -253,7 +253,24 @@ struct SkillTests {
         #expect(s?.ref == "main" && s?.path == "xlsx")
         #expect(SkillInstaller.parse("https://github.com/a/b/blob/dev/skills/x/SKILL.md")?.path == "skills/x")
         #expect(SkillInstaller.parse("owner/repo")?.repo == "repo")
+        #expect(SkillInstaller.parse("https://github.com/owner/repo?tab=readme-ov-file#readme")?.repo == "repo")
+        #expect(SkillInstaller.parse("https://github.com/owner/bad repo") == nil)
         #expect(SkillInstaller.parse("not a url") == nil)
+    }
+
+    @Test("安装技能时拦截反斜杠穿越且不残留 .staging 目录")
+    func installSafetyAndStagingCleanup() throws {
+        let files: [String: Data] = [
+            "repo-main/SKILL.md": Data("---\nname: safe\n---\nok".utf8),
+            "repo-main/sub\\..\\..\\outside.txt": Data("evil".utf8),
+        ]
+        let dest = TestTemp.dir("skills-safe")
+        let src = SkillInstaller.Source(owner: "o", repo: "repo", ref: "main", path: "")
+        let skills = try SkillInstaller.installFiles(files, source: src, into: dest)
+        #expect(skills.count == 1)
+        let entries = try FileManager.default.contentsOfDirectory(atPath: dest.path)
+        #expect(!entries.contains { $0.hasPrefix(".staging-") })
+        #expect(!FileManager.default.fileExists(atPath: dest.deletingLastPathComponent().appendingPathComponent("outside.txt").path))
     }
 
     @Test("从仓库包里挑出技能文件夹（带上许可证和来源）")

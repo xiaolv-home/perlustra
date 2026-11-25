@@ -69,6 +69,11 @@ public enum AIAgent {
 
     static func clip(_ o: AIToolOutput) -> AIToolOutput {
         guard o.text.count > maxToolOutput else { return o }
-        return AIToolOutput(String(o.text.prefix(maxToolOutput)) + "\n…（输出过长已截断，共 \(o.text.count) 字；需要后面的内容请带 offset 再读）", isError: o.isError, images: o.images)
+        return AIToolOutput(
+            String(o.text.prefix(maxToolOutput)) + "\n…（输出过长已截断，共 \(o.text.count) 字；需要后面的内容请带 offset 再读）",
+            isError: o.isError,
+            images: o.images,
+            createdFiles: o.createdFiles
+        )
     }
 }

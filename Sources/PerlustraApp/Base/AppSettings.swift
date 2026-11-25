@@ -2,6 +2,20 @@ import Foundation
 import SwiftUI
 import AppKit
 
+/// Centralised locations for Perlustra's support and cache folders.
+enum AppPaths {
+    static var applicationSupport: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Perlustra", isDirectory: true)
+    }
+
+    /// Kept under `app.loupe.viewer` so cached iWork PDF exports survive the rename without re-exporting.
+    static var exportsCache: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("app.loupe.viewer/exports", isDirectory: true)
+    }
+}
+
 /// Set when the debug harness drives the app (tests, screenshots): it then leaves no trace in
 /// the user's history — no recent files, remembered folder, window size or sidebar layout.
 enum AppEnvironment {

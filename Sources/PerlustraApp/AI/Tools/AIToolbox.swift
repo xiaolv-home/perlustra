@@ -195,21 +195,30 @@ final class AIToolbox {
         } else {
             re = nil
         }
-        let hits = await Task.detached(priority: .userInitiated) { Self.search(q, regex: re, in: folder) }.value
+        let hits = await Task.detached(priority: .userInitiated) {
+            Self.search(q, regex: re, in: folder, isCancelled: { Task.isCancelled })
+        }.value
         if hits.isEmpty { return AIToolOutput("在 \(folder.path) 里没有找到「\(q)」") }
         return AIToolOutput("在 \(folder.path) 里找到 \(hits.count)\(hits.count >= 120 ? "+" : "") 处：\n" + hits.joined(separator: "\n"))
     }
 
-    nonisolated static func search(_ q: String, regex re: NSRegularExpression?, in folder: URL) -> [String] {
+    nonisolated static func search(
+        _ q: String,
+        regex re: NSRegularExpression?,
+        in folder: URL,
+        timeout: TimeInterval = 15,
+        isCancelled: () -> Bool = { false }
+    ) -> [String] {
         var out: [String] = []
         guard
             let e = FileManager.default.enumerator(
                 at: folder, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants])
         else { return out }
+        let deadline = Date().addingTimeInterval(timeout)
         var scanned = 0
         while let u = e.nextObject() as? URL {
-            if out.count >= 120 || scanned > 5000 { break }
+            if isCancelled() || Date() >= deadline || out.count >= 120 || scanned > 5000 { break }
             guard DocumentText.textExtensions.contains(u.pathExtension.lowercased()),
                 let v = try? u.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), v.isRegularFile == true,
                 (v.fileSize ?? 0) < 8 << 20, let text = try? TextFileFormat.read(u).0
@@ -217,10 +226,14 @@ final class AIToolbox {
             scanned += 1
             let rel = u.path.replacingOccurrences(of: folder.path + "/", with: "")
             for (i, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-                let l = String(line)
-                let match = re.map { $0.firstMatch(in: l, range: NSRange(l.startIndex..., in: l)) != nil } ?? l.localizedCaseInsensitiveContains(q)
+                if i % 256 == 0, (isCancelled() || Date() >= deadline) { break }
+                // Cap per-line regex input length to mitigate catastrophic backtracking on minified lines.
+                let capped = line.count > 4096 ? String(line.prefix(4096)) : String(line)
+                let match =
+                    re.map { $0.firstMatch(in: capped, range: NSRange(capped.startIndex..., in: capped)) != nil }
+                    ?? capped.localizedCaseInsensitiveContains(q)
                 if match {
-                    out.append("\(rel):\(i + 1): \(l.trimmingCharacters(in: .whitespaces).prefix(240))")
+                    out.append("\(rel):\(i + 1): \(capped.trimmingCharacters(in: .whitespaces).prefix(240))")
                     if out.count >= 120 { break }
                 }
             }
@@ -247,9 +260,11 @@ final class AIToolbox {
         } catch {
             return .error("写入失败：\((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)")
         }
-        AIFiles.announce(url)
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        return AIToolOutput("已生成 \(url.path)（\(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))）")
+        return AIToolOutput(
+            "已生成 \(url.path)（\(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))）",
+            createdFiles: [url]
+        )
     }
 
     private func createSpreadsheet(_ args: AIJSON) -> AIToolOutput {
@@ -268,10 +283,12 @@ final class AIToolbox {
             }
             return (name: s["name"]?.string ?? "Sheet\(i + 1)", rows: rows)
         }
-        switch AIFiles.writeTable(parsed, to: path, near: currentFile) {
+        switch AIFiles.writeTable(parsed, to: path, near: currentFile, browsing: workspace?.aiBrowsingFolder) {
         case .success(let url):
-            AIFiles.announce(url)
-            return AIToolOutput("已生成 \(url.path)（\(parsed.map { "\($0.name) \($0.rows.count) 行" }.joined(separator: "，"))）")
+            return AIToolOutput(
+                "已生成 \(url.path)（\(parsed.map { "\($0.name) \($0.rows.count) 行" }.joined(separator: "，"))）",
+                createdFiles: [url]
+            )
         case .failure(let e): return .error(e.message)
         }
     }
@@ -333,10 +350,17 @@ final class AIToolbox {
             let again = AIApproval(title: "再确认一次：运行这条命令？", detail: "本次对话载入过技能。技能内容未经 Perlustra 审核，命令会以你的账户权限执行。\n\(cmd)")
             guard await approve(again) else { return .error("用户没有再次确认，命令没有运行") }
         }
-        return await Task.detached(priority: .userInitiated) { Self.shell(cmd, cwd: cwd) }.value
+        return await Task.detached(priority: .userInitiated) {
+            Self.shell(cmd, cwd: cwd, isCancelled: { Task.isCancelled })
+        }.value
     }
 
-    nonisolated static func shell(_ cmd: String, cwd: URL, timeout: TimeInterval = 180) -> AIToolOutput {
+    nonisolated static func shell(
+        _ cmd: String,
+        cwd: URL,
+        timeout: TimeInterval = 180,
+        isCancelled: () -> Bool = { false }
+    ) -> AIToolOutput {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-lc", cmd]
@@ -348,16 +372,43 @@ final class AIToolbox {
         let buffer = OutputBuffer()
         pipe.fileHandleForReading.readabilityHandler = { h in buffer.append(h.availableData) }
         do { try p.run() } catch { return .error("无法运行：\(error.localizedDescription)") }
+        let pid = p.processIdentifier
+        _ = setpgid(pid, pid)
         let deadline = Date().addingTimeInterval(timeout)
-        while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        var cancelled = false
+        while p.isRunning && Date() < deadline {
+            if isCancelled() {
+                cancelled = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
         var timedOut = false
-        if p.isRunning { p.terminate(); timedOut = true }
+        if p.isRunning {
+            timedOut = !cancelled
+            if getpgid(pid) == pid { _ = kill(-pid, SIGTERM) } else { p.terminate() }
+            let killDeadline = Date().addingTimeInterval(0.6)
+            while p.isRunning && Date() < killDeadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if p.isRunning {
+                if getpgid(pid) == pid { _ = kill(-pid, SIGKILL) }
+                _ = kill(pid, SIGKILL)
+            }
+        }
         p.waitUntilExit()
         pipe.fileHandleForReading.readabilityHandler = nil
         buffer.append(pipe.fileHandleForReading.readDataToEndOfFile())
         let text = String(decoding: buffer.data, as: UTF8.self)
-        let status = timedOut ? "超时（\(Int(timeout)) 秒）已停止" : "退出码 \(p.terminationStatus)"
-        return AIToolOutput("\(status)\n\(text.isEmpty ? "（无输出）" : text)", isError: timedOut || p.terminationStatus != 0)
+        let status: String
+        if cancelled {
+            status = "用户已停止"
+        } else if timedOut {
+            status = "超时（\(Int(timeout)) 秒）已停止"
+        } else {
+            status = "退出码 \(p.terminationStatus)"
+        }
+        return AIToolOutput("\(status)\n\(text.isEmpty ? "（无输出）" : text)", isError: cancelled || timedOut || p.terminationStatus != 0)
     }
 }
 

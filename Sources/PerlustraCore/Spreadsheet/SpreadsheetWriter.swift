@@ -116,9 +116,28 @@ public enum XLSXPatcher {
         }
     }
 
+    private static let rowNumAttrRE: NSRegularExpression? = try? NSRegularExpression(pattern: #"\br="(\d+)""#)
+    private static let cellRefAttrRE: NSRegularExpression? = try? NSRegularExpression(pattern: #"\br="([A-Z]+)(\d+)""#)
+    private static let cellStyleAttrRE: NSRegularExpression? = try? NSRegularExpression(pattern: #"\bs="(\d+)""#)
+    private static let defaultRowRE: NSRegularExpression? = try? NSRegularExpression(
+        pattern: "<row\\b([^>]*?)(/>|>(.*?)</row>)", options: [.dotMatchesLineSeparators])
+    private static let defaultCellRE: NSRegularExpression? = try? NSRegularExpression(
+        pattern: "<c\\b([^>]*?)(/>|>(.*?)</c>)", options: [.dotMatchesLineSeparators])
+
+    private static func rowRegex(prefix: String) throws -> NSRegularExpression {
+        if prefix.isEmpty, let r = defaultRowRE { return r }
+        let p = NSRegularExpression.escapedPattern(for: prefix)
+        return try NSRegularExpression(pattern: "<\(p)row\\b([^>]*?)(/>|>(.*?)</\(p)row>)", options: [.dotMatchesLineSeparators])
+    }
+
+    private static func cellRegex(prefix: String) throws -> NSRegularExpression {
+        if prefix.isEmpty, let r = defaultCellRE { return r }
+        let p = NSRegularExpression.escapedPattern(for: prefix)
+        return try NSRegularExpression(pattern: "<\(p)c\\b([^>]*?)(/>|>(.*?)</\(p)c>)", options: [.dotMatchesLineSeparators])
+    }
+
     static func patchSheet(_ xml: String, sheet: Sheet, keys: Set<Int>, heightRows: Set<Int> = []) throws -> String {
         let prefix = try namespacePrefix(xml)
-        let p = NSRegularExpression.escapedPattern(for: prefix)
 
         var doc = xml
         // Empty <sheetData/> → open/close pair.
@@ -126,8 +145,7 @@ public enum XLSXPatcher {
         doc = doc.replacingOccurrences(of: "<\(prefix)sheetData />", with: "<\(prefix)sheetData></\(prefix)sheetData>")
 
         // Index rows once: number → range of the whole <row …>…</row> (or self-closing) element.
-        let rowRE = try! NSRegularExpression(pattern: "<\(p)row\\b([^>]*?)(/>|>(.*?)</\(p)row>)", options: [.dotMatchesLineSeparators])
-        let rAttr = try! NSRegularExpression(pattern: #"\br="(\d+)""#)
+        let rowRE = try rowRegex(prefix: prefix)
         var rows: [(num: Int, range: NSRange)] = []
         let dns = doc as NSString
         guard let sdStart = doc.range(of: "<\(prefix)sheetData"), let sdEnd = doc.range(of: "</\(prefix)sheetData>") else {
@@ -138,7 +156,7 @@ public enum XLSXPatcher {
         for m in rowRE.matches(in: doc, range: dataRange) {
             let attrs = dns.substring(with: m.range(at: 1))
             let n: Int
-            if let am = rAttr.firstMatch(in: attrs, range: NSRange(location: 0, length: (attrs as NSString).length)) {
+            if let am = rowNumAttrRE?.firstMatch(in: attrs, range: NSRange(location: 0, length: (attrs as NSString).length)) {
                 n = Int((attrs as NSString).substring(with: am.range(at: 1))) ?? implicit + 1
             } else {
                 n = implicit + 1
@@ -149,8 +167,10 @@ public enum XLSXPatcher {
 
         var byRow = Dictionary(grouping: keys, by: { $0 / 16384 })
         for r in heightRows where byRow[r] == nil { byRow[r] = [] }
-        // Patch from the bottom up so earlier ranges stay valid.
+        // Patch from the bottom up so earlier ranges stay valid; keep a fixed tail anchor so
+        // multiple rows appended past the end stay in ascending OOXML `r` order.
         var mutable = NSMutableString(string: doc)
+        var tailAnchor: Int?
         for (r, rowKeys) in byRow.sorted(by: { $0.key > $1.key }) {
             let cols = rowKeys.map { $0 % 16384 }.sorted()
             let height = heightRows.contains(r) ? sheet.rowHeights[r] : nil
@@ -164,12 +184,12 @@ public enum XLSXPatcher {
                 guard !cells.isEmpty || height != nil else { continue }
                 let ht = height.map { " ht=\"\(fmtNum($0))\" customHeight=\"1\"" } ?? ""
                 let newRow = "<\(prefix)row r=\"\(r + 1)\"\(ht)>\(cells)</\(prefix)row>"
-                // Insert before the first row that comes after it, else before </sheetData>.
                 if let next = rows.filter({ $0.num > r }).min(by: { $0.num < $1.num }) {
                     mutable.insert(newRow, at: next.range.location)
                 } else {
-                    let end = mutable.range(of: "</\(prefix)sheetData>")
-                    mutable.insert(newRow, at: end.location)
+                    let pos = tailAnchor ?? mutable.range(of: "</\(prefix)sheetData>").location
+                    mutable.insert(newRow, at: pos)
+                    tailAnchor = pos
                 }
             }
         }
@@ -194,15 +214,12 @@ public enum XLSXPatcher {
     }
 
     static func patchRow(_ rowXML: String, sheet: Sheet, row r: Int, cols: [Int], prefix: String) throws -> String {
-        let p = NSRegularExpression.escapedPattern(for: prefix)
         var row = rowXML
         if row.hasSuffix("/>") {
             // <row r="3" …/> → <row r="3" …></row>
             row = String(row.dropLast(2)) + "></\(prefix)row>"
         }
-        let cellRE = try! NSRegularExpression(pattern: "<\(p)c\\b([^>]*?)(/>|>(.*?)</\(p)c>)", options: [.dotMatchesLineSeparators])
-        let refRE = try! NSRegularExpression(pattern: #"\br="([A-Z]+)(\d+)""#)
-        let sRE = try! NSRegularExpression(pattern: #"\bs="(\d+)""#)
+        let cellRE = try cellRegex(prefix: prefix)
         for c in cols.reversed() {
             let ns = row as NSString
             var cells: [(col: Int, range: NSRange, style: String?)] = []
@@ -211,11 +228,11 @@ public enum XLSXPatcher {
                 let attrs = ns.substring(with: m.range(at: 1))
                 let ans = attrs as NSString
                 var col = implicitCol + 1
-                if let rm = refRE.firstMatch(in: attrs, range: NSRange(location: 0, length: ans.length)) {
+                if let rm = cellRefAttrRE?.firstMatch(in: attrs, range: NSRange(location: 0, length: ans.length)) {
                     col = Sheet.columnIndex(ans.substring(with: rm.range(at: 1))) ?? col
                 }
                 implicitCol = col
-                let style = sRE.firstMatch(in: attrs, range: NSRange(location: 0, length: ans.length)).map { ans.substring(with: $0.range(at: 1)) }
+                let style = cellStyleAttrRE?.firstMatch(in: attrs, range: NSRange(location: 0, length: ans.length)).map { ans.substring(with: $0.range(at: 1)) }
                 cells.append((col, m.range, style))
             }
             let mrow = NSMutableString(string: row)

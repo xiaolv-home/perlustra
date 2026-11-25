@@ -186,6 +186,7 @@ protocol FormatCommandHandling: AnyObject {
 }
 
 /// App-wide actions, sent along the responder chain so that views need not know the app delegate.
+@MainActor
 @objc protocol AppActions {
     func showSettings(_ sender: Any?)
     func showOpenPanel(_ sender: Any?)

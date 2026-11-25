@@ -224,6 +224,7 @@ final class HTMLRenderer: WebDocumentRenderer, Renderer {
         let folder = url.deletingLastPathComponent()
         let wv = try await WebFactory.make(javaScript: scripts, fileRoot: folder, keepsData: scripts && !AppEnvironment.isScripted)
         navigator.host = host
+        navigator.fileRoot = folder
         if scripts { navigator.siteRoot = folder }
         wv.navigationDelegate = navigator
         wv.uiDelegate = navigator

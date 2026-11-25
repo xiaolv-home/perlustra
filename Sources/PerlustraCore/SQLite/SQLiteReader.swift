@@ -106,13 +106,50 @@ public enum SQLiteError: LocalizedError, Equatable {
     }
 }
 
-/// Stops a running read: set from any thread, checked by SQLite every few thousand steps.
+/// Stops a running read: set from any thread, or tripped automatically past an optional deadline.
 public final class SQLiteCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var flag = false
+    private var deadline: DispatchTime?
+    private var timedOutFlag = false
+
     public init() {}
-    public func cancel() { lock.lock(); flag = true; lock.unlock() }
-    public var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+
+    public func cancel() {
+        lock.lock()
+        flag = true
+        lock.unlock()
+    }
+
+    func armDeadline(seconds: Double?) {
+        lock.lock()
+        deadline = seconds.map { DispatchTime.now() + $0 }
+        timedOutFlag = false
+        lock.unlock()
+    }
+
+    public var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
+    }
+
+    var shouldStop: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if flag { return true }
+        if let d = deadline, DispatchTime.now() >= d {
+            timedOutFlag = true
+            return true
+        }
+        return false
+    }
+
+    var didTimeOut: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return timedOutFlag && !flag
+    }
 }
 
 /// Read-only access to SQLite files via the system libsqlite3. Never writes and never
@@ -153,7 +190,7 @@ public enum SQLiteReader {
                     db, 2000,
                     { ctx in
                         guard let ctx else { return 0 }
-                        return Unmanaged<SQLiteCancellation>.fromOpaque(ctx).takeUnretainedValue().isCancelled ? 1 : 0
+                        return Unmanaged<SQLiteCancellation>.fromOpaque(ctx).takeUnretainedValue().shouldStop ? 1 : 0
                     }, Unmanaged.passUnretained(cancel).toOpaque())
             }
         }
@@ -268,14 +305,24 @@ public enum SQLiteReader {
     }
 
     /// Row counts of the given tables (not views: counting one means running it). A table
-    /// that cannot be counted is left out; the whole call stops when cancelled.
-    public static func countRows(url: URL, tables: [String], cancel: SQLiteCancellation? = nil) throws -> [String: Int64] {
-        let c = try Connection(url, cancel: cancel)
+    /// that cannot be counted is left out; stops cleanly if cancelled or if total counting exceeds `timeout`.
+    public static func countRows(
+        url: URL,
+        tables: [String],
+        cancel: SQLiteCancellation? = nil,
+        timeout: Double = 10
+    ) throws -> [String: Int64] {
+        let tracker = cancel ?? SQLiteCancellation()
+        tracker.armDeadline(seconds: timeout)
+        defer { tracker.armDeadline(seconds: nil) }
+        let c = try Connection(url, cancel: tracker)
         var out: [String: Int64] = [:]
         for name in tables {
+            if tracker.didTimeOut { break }
             do {
                 try c.query("SELECT COUNT(*) FROM main." + quote(name)) { out[name] = sqlite3_column_int64($0, 0) }
             } catch SQLiteError.cancelled {
+                if tracker.didTimeOut { break }
                 throw SQLiteError.cancelled
             } catch {
                 continue
@@ -318,7 +365,9 @@ public enum SQLiteReader {
         case SQLITE_NULL: return .null
         case SQLITE_INTEGER: return .integer(sqlite3_column_int64(stmt, index))
         case SQLITE_FLOAT: return .real(sqlite3_column_double(stmt, index))
-        case SQLITE_BLOB: return .blob(Int(sqlite3_column_bytes(stmt, index)))
+        case SQLITE_BLOB:
+            _ = sqlite3_column_blob(stmt, index)
+            return .blob(Int(sqlite3_column_bytes(stmt, index)))
         default: return .text(text(stmt, index))
         }
     }

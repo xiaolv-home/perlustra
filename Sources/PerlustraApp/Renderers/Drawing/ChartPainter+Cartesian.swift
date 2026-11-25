@@ -410,7 +410,7 @@ extension ChartPainter {
             if p.plot.kind == .bubble {
                 for (i, q) in pts.enumerated() {
                     guard let q else { continue }
-                    let sz = (s.sizes.flatMap { i < $0.count ? $0[i] : nil } ?? 1) ?? 1
+                    let sz = s.sizes.flatMap { i < $0.count ? $0[i] : nil } ?? 1
                     let r = max(3, sqrt(max(0, sz) / maxSize) * min(plotRect.width, plotRect.height) * 0.12)
                     color(s).withAlphaComponent(0.7).setFill()
                     NSBezierPath(ovalIn: CGRect(x: q.x - r, y: q.y - r, width: r * 2, height: r * 2)).fill()

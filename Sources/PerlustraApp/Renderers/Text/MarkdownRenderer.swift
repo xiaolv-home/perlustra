@@ -34,6 +34,7 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
     private var renderedText: String?
     private var draftTimer: Timer?
     private var autosaveTimer: Timer?
+    private var replaceTask: Task<Void, Never>?
     /// How many characters are selected in the writer.
     private var selectedChars = 0
 
@@ -57,6 +58,7 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
         sourceLanguage = "markdown"
         editableSource = true
         navigator.host = host
+        navigator.fileRoot = folder
         buildShell(nil)
         documentMode = file.size > Self.longestForEditor ? Self.readMode : Self.writeMode
         if documentMode == Self.writeMode {
@@ -128,10 +130,16 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
     func showReplace() {
         guard mode == Self.readMode else { showFind(replace: true); return }
         mode = sourceMode
-        Task {
-            while code == nil || mode != sourceMode { try? await Task.sleep(nanoseconds: 50_000_000) }
+        replaceTask?.cancel()
+        replaceTask = Task { [weak self] in
+            for _ in 0..<40 {
+                guard let self, !Task.isCancelled else { return }
+                if self.code != nil && self.mode == self.sourceMode { break }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
             try? await Task.sleep(nanoseconds: 100_000_000)
-            showFind(replace: true)
+            guard let self, !Task.isCancelled, self.code != nil, self.mode == self.sourceMode else { return }
+            self.showFind(replace: true)
         }
     }
 
@@ -214,7 +222,15 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
         let path = (href.removingPercentEncoding ?? href).components(separatedBy: "#")[0]
         guard !path.isEmpty else { return }
         let target = path.hasPrefix("/") ? URL(fileURLWithPath: path) : folder.appendingPathComponent(path)
-        if FileManager.default.fileExists(atPath: target.path) { host?.open(target) }
+        if let inside = FileAccessPolicy.fileInsideRoot(target, root: folder) {
+            if FileManager.default.fileExists(atPath: inside.path) { host?.open(inside) }
+        } else if FileManager.default.fileExists(atPath: target.path) {
+            host?.showNotice(
+                "链接指向当前文件夹外的文件：\(target.path)",
+                style: .info,
+                action: NoticeAction(title: "打开") { [weak self] in self?.host?.open(target) }
+            )
+        }
     }
 
     // MARK: Editing and saving
@@ -303,10 +319,11 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
         let shown = currentSource
         let text = textForDisk()
         do {
+            let oldEncodingName = format.encoding.name
             let kept = try format.write(text, to: dest)
             if !kept {
                 format = TextFileFormat(encoding: .utf8, lineEnding: format.lineEnding)
-                host?.showNotice("已保存。部分字符无法用原编码（\(format.encoding.name)）表示，文件已改为 UTF-8。", style: .warning, action: nil)
+                host?.showNotice("已保存。部分字符无法用原编码（\(oldEncodingName)）表示，文件已改为 UTF-8。", style: .warning, action: nil)
             }
             if dest == url {
                 diskText = text
@@ -341,9 +358,10 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
 
     private func saveAs() {
         guard let url, let window = host?.window else { return }
-        Task {
-            await collectText(from: mode)
-            if isDraft { saveDraftAs { _ in }; return }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.collectText(from: self.mode)
+            if self.isDraft { self.saveDraftAs { _ in }; return }
             let panel = NSSavePanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
             panel.directoryURL = url.deletingLastPathComponent()
@@ -358,14 +376,15 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
     /// 导出为 Word / PDF / 网页, beside the document unless chosen otherwise.
     func export(as ext: String) {
         guard let window = host?.window else { return }
-        Task {
-            await collectText(from: mode)
+        Task { [weak self] in
+            guard let self else { return }
+            await self.collectText(from: self.mode)
             let panel = NSSavePanel()
             panel.allowedContentTypes = [UTType(filenameExtension: ext) ?? .data]
-            panel.directoryURL = isDraft ? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first : folder
-            let stem = isDraft ? MarkdownDrafts.suggestedName(for: currentSource) : (url?.deletingPathExtension().lastPathComponent ?? "文档")
+            panel.directoryURL = self.isDraft ? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first : self.folder
+            let stem = self.isDraft ? MarkdownDrafts.suggestedName(for: self.currentSource) : (self.url?.deletingPathExtension().lastPathComponent ?? "文档")
             panel.nameFieldStringValue = stem + "." + ext
-            let text = currentSource
+            let text = self.currentSource
             panel.beginSheetModal(for: window) { [weak self] resp in
                 guard resp == .OK, let dest = panel.url else { return }
                 do {
@@ -381,6 +400,8 @@ final class MarkdownRenderer: WebDocumentRenderer, Renderer, FormatCommandHandli
     }
 
     func cleanup() {
+        replaceTask?.cancel()
+        replaceTask = nil
         draftTimer?.invalidate()
         autosaveTimer?.invalidate()
         // A draft nobody wrote anything in is not kept.

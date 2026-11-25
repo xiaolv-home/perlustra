@@ -40,12 +40,14 @@ APP_LAYERS = {
 # Only the registry (and the debug-only automation) may name a particular kind of renderer.
 RENDERER_USERS_OK = {"Renderers", "App/AppAutomation+Debug.swift"}
 UI_FRAMEWORKS = re.compile(r"^import (AppKit|SwiftUI|WebKit|Quartz|PDFKit|AVKit|AVFoundation|CoreText)\b", re.M)
-DECLARATION = re.compile(
+TYPE_DECLARATION = re.compile(
     r"^(?:@\w+(?:\([^)]*\))?\s+)*(?:public |internal |final |open |indirect )*"
     r"(?:struct|class|enum|protocol|typealias|actor)\s+([A-Z]\w+)", re.M)
+TOP_FUNC_OR_VAR = re.compile(
+    r"^(?:@\w+(?:\([^)]*\))?\s+)*(?:public |internal )*(?:func|let|var)\s+([A-Za-z_]\w+)", re.M)
 STRING = re.compile(r'"""[\s\S]*?"""|#"(?:[^"\n]|"(?!#))*"#|"(?:[^"\\\n]|\\.)*"')
 COMMENT = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/")
-IDENTIFIER = re.compile(r"\b[A-Z]\w+\b")
+IDENTIFIER = re.compile(r"(?<![.\w])[A-Za-z_]\w*\b")
 
 
 def strip(source: str) -> str:
@@ -64,8 +66,8 @@ def layer_of(relative: Path, target: str) -> str:
     return parts[0]
 
 
-def scan(target: str) -> tuple[dict[str, str], list[tuple[Path, str, str]]]:
-    owners: dict[str, str] = {}
+def scan(target: str) -> tuple[dict[str, set[str]], list[tuple[Path, str, str]]]:
+    owners: dict[str, set[str]] = defaultdict(set)
     files = []
     folder = ROOT / "Sources" / target
     for path in sorted(folder.rglob("*.swift")):
@@ -73,15 +75,21 @@ def scan(target: str) -> tuple[dict[str, str], list[tuple[Path, str, str]]]:
         if len(relative.parts) < 2:
             continue
         source = path.read_text(encoding="utf-8")
+        cleaned = strip(source)
         layer = layer_of(relative, target)
-        files.append((path, layer, strip(source)))
-        for name in DECLARATION.findall(source):
-            owners.setdefault(name, layer)
+        files.append((path, layer, cleaned))
+        for name in TYPE_DECLARATION.findall(cleaned):
+            owners[name].add(layer)
+        for name in TOP_FUNC_OR_VAR.findall(cleaned):
+            owners[name].add(layer)
     return owners, files
 
 
 def check_layers(target: str, rules: dict[str, set[str]], problems: list[str]) -> None:
     owners, files = scan(target)
+    for name, layers in sorted(owners.items()):
+        if len(layers) > 1 and name[0].isupper():
+            problems.append(f"{target}：顶层类型「{name}」在多个目录重复声明：{', '.join(sorted(layers))}")
     for path, layer, code in files:
         if layer not in rules:
             problems.append(f"{path.relative_to(ROOT)}：目录「{layer}」不在分层规则里")
@@ -90,17 +98,20 @@ def check_layers(target: str, rules: dict[str, set[str]], problems: list[str]) -
         seen = set()
         for number, line in enumerate(code.split("\n"), 1):
             for name in IDENTIFIER.findall(line):
-                owner = owners.get(name)
-                if owner and owner not in allowed and (name, owner) not in seen:
-                    seen.add((name, owner))
-                    problems.append(f"{path.relative_to(ROOT)}:{number}：{layer} 不该用 {owner} 里的 {name}")
+                declared_in = owners.get(name)
+                if not declared_in or (declared_in & allowed):
+                    continue
+                for owner in sorted(declared_in):
+                    if (name, owner) not in seen:
+                        seen.add((name, owner))
+                        problems.append(f"{path.relative_to(ROOT)}:{number}：{layer} 不该用 {owner} 里的 {name}")
 
 
 def check_renderer_names(problems: list[str]) -> None:
     folder = ROOT / "Sources/PerlustraApp"
     concrete = set()
     for path in (folder / "Renderers").rglob("*.swift"):
-        concrete |= {n for n in DECLARATION.findall(path.read_text(encoding="utf-8")) if n.endswith("Renderer") and n != "Renderer"}
+        concrete |= {n for n in TYPE_DECLARATION.findall(path.read_text(encoding="utf-8")) if n.endswith("Renderer") and n != "Renderer"}
     for path in sorted(folder.rglob("*.swift")):
         relative = path.relative_to(folder)
         if relative.parts[0] in RENDERER_USERS_OK or str(relative) in RENDERER_USERS_OK:

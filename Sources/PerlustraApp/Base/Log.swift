@@ -21,3 +21,9 @@ enum Log {
         }
     }
 }
+
+func debugLog(_ s: @autoclosure () -> String) {
+    if ProcessInfo.processInfo.environment["PERLUSTRA_DEBUG"] != nil {
+        FileHandle.standardError.write(Data(("[perlustra] " + s() + "\n").utf8))
+    }
+}

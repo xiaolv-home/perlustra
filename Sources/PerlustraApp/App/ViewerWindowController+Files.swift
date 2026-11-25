@@ -2,7 +2,14 @@ import AppKit
 import PerlustraCore
 
 /// The sidebar's file actions: they keep the open tabs in step with what happens on disk.
-extension ViewerWindowController {
+extension ViewerWindowController: SidebarHost {
+    func openInTab(_ url: URL) {
+        if let app = AppDelegate.shared {
+            app.openInTab(url, from: self)
+        } else {
+            addTab(url)
+        }
+    }
     /// Tabs showing this file, or files inside this folder.
     private func tabs(under url: URL) -> [ViewerModel] {
         let path = url.standardizedFileURL.path
@@ -135,20 +142,54 @@ extension ViewerWindowController {
         alert.window.initialFirstResponder = field
     }
 
-    func compressFromSidebar(_ url: URL, format: ArchiveOutputFormat) {
-        let dest = ArchiveWriter.suggestedArchiveURL(for: [url], format: format)
+    func trashItemsFromSidebar(_ urls: [URL]) {
+        let sorted = urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        guard !sorted.isEmpty, let window else { return }
+        for u in sorted where refuseIfUnsaved(u) { return }
+        if sorted.count == 1, let single = sorted.first {
+            let isDir = browser.items.first(where: { $0.url == single })?.isFolder ?? false
+            trashFromSidebar(single, isFolder: isDir)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "把选中的 \(sorted.count) 项移到废纸篓？"
+        alert.informativeText = "可以从废纸篓放回来。"
+        alert.addButton(withTitle: "移到废纸篓")
+        alert.addButton(withTitle: "取消")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            var moved = 0
+            for u in sorted {
+                let affected = self.tabs(under: u)
+                if (try? FileOperations.moveToTrash(u)) != nil {
+                    for doc in affected { self.closeTab(doc) }
+                    moved += 1
+                }
+            }
+            self.browser.reload()
+            if moved > 0 {
+                self.model.showNotice("已把 \(moved) 项移到废纸篓", style: .info, action: nil)
+            }
+        }
+    }
+
+    func compressItemsFromSidebar(_ urls: [URL], format: ArchiveOutputFormat) {
+        let items = urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        guard !items.isEmpty else { return }
+        let dest = ArchiveWriter.suggestedArchiveURL(for: items, format: format, in: browser.dir)
+        let titleLabel = items.count == 1 ? "「\(items[0].lastPathComponent)」" : "\(items.count) 项"
         var task: Task<Void, Never>?
         task = Task { [weak self] in
             guard let self else { return }
             self.model.showNotice(
-                "正在压缩「\(url.lastPathComponent)」…",
+                "正在压缩\(titleLabel)…",
                 style: .info,
                 action: NoticeAction(title: "取消") { task?.cancel() }
             )
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try ArchiveWriter.compress(
-                        items: [url],
+                        items: items,
                         to: dest,
                         options: ArchiveCompressOptions(format: format),
                         isCancelled: { Task.isCancelled }
@@ -172,6 +213,10 @@ extension ViewerWindowController {
                 )
             }
         }
+    }
+
+    func compressFromSidebar(_ url: URL, format: ArchiveOutputFormat) {
+        compressItemsFromSidebar([url], format: format)
     }
 
     func extractFromSidebar(_ url: URL) {

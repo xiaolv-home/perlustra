@@ -1,4 +1,19 @@
 import AppKit
+import PerlustraCore
+
+/// Host interface exposed to sidebar views and `ViewerModel` so they do not depend on
+/// concrete window controller or application delegate types.
+@MainActor
+protocol SidebarHost: AnyObject {
+    func openInTab(_ url: URL)
+    func renameFromSidebar(_ url: URL)
+    func duplicateFromSidebar(_ url: URL)
+    func trashFromSidebar(_ url: URL, isFolder: Bool)
+    func trashItemsFromSidebar(_ urls: [URL])
+    func newFolderFromSidebar()
+    func compressItemsFromSidebar(_ urls: [URL], format: ArchiveOutputFormat)
+    func extractFromSidebar(_ url: URL)
+}
 
 /// The sidebar's folder: where you are, what is in it (folders first), and how you got there.
 /// It follows the open file, but you can walk up and into other folders without opening anything.

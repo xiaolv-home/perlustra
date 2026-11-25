@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import WebKit
 import UniformTypeIdentifiers
 import PerlustraCore
@@ -19,6 +20,7 @@ enum AppResources {
 /// Serves `perlustra://app/<path>` from the bundled web assets and `perlustra://file/<abs path>`
 /// from disk, so pages never need file:// access and nothing ever touches the network.
 final class PerlustraSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let maxResourceBytes = 128 << 20
     private var active = Set<ObjectIdentifier>()
     /// `perlustra://file/` only serves files inside this folder, after resolving symlinks.
     /// `nil` serves nothing (fail closed). Markdown and HTML always pass the document's folder.
@@ -52,10 +54,20 @@ final class PerlustraSchemeHandler: NSObject, WKURLSchemeHandler {
         let id = ObjectIdentifier(task)
         active.insert(id)
         DispatchQueue.global(qos: .userInitiated).async {
-            let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            let rv = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            let tooLarge = (rv?.fileSize ?? 0) > Self.maxResourceBytes
+            let isReg = rv?.isRegularFile == true
+            let data: Data? = (isReg && !tooLarge) ? (try? Data(contentsOf: fileURL, options: [.mappedIfSafe])) : nil
             DispatchQueue.main.async {
                 guard self.active.remove(id) != nil else { return }
-                guard let data else { task.didFailWithError(URLError(.fileDoesNotExist)); return }
+                if tooLarge {
+                    task.didFailWithError(URLError(.dataLengthExceedsMaximum))
+                    return
+                }
+                guard let data else {
+                    task.didFailWithError(URLError(.fileDoesNotExist))
+                    return
+                }
                 let ext = fileURL.pathExtension.lowercased()
                 var mime = UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
                 if ext == "js" { mime = "text/javascript" }
@@ -151,16 +163,30 @@ enum WebFactory {
         return list
     }
 
-    /// Storage for local pages that run scripts, kept between launches (a reader's progress and
-    /// bookmarks live in localStorage). Separate from everything else; never touches the network.
-    static let localPagesStore = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "6B1F3C2E-4A5D-4E8B-9C7A-1D2E3F405A6B")!)
+    /// Deterministic per-folder store identifier so each local web folder keeps its own
+    /// reading progress without exposing `localStorage` across unrelated folders (such as Downloads).
+    static func storeIdentifier(forFolder folder: URL) -> UUID {
+        let canonical = folder.resolvingSymlinksInPath().standardizedFileURL.path
+        var bytes = Array(SHA256.hash(data: Data(("perlustra-web-store:" + canonical).utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(
+            uuid: (
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+            ))
+    }
 
-    /// `fileRoot` limits which local files the page may load; `keepsData` keeps its
-    /// localStorage / IndexedDB between launches.
+    /// `fileRoot` limits which local files the page may load; `keepsData` keeps that folder's
+    /// localStorage / IndexedDB between launches, isolated per folder.
     static func make(javaScript: Bool, fileRoot: URL? = nil, keepsData: Bool = false) async throws -> PerlustraWebView {
         let cfg = WKWebViewConfiguration()
         cfg.setURLSchemeHandler(PerlustraSchemeHandler(fileRoot: fileRoot), forURLScheme: "perlustra")
-        cfg.websiteDataStore = keepsData ? localPagesStore : .nonPersistent()
+        if keepsData, let root = fileRoot {
+            cfg.websiteDataStore = WKWebsiteDataStore(forIdentifier: storeIdentifier(forFolder: root))
+        } else {
+            cfg.websiteDataStore = .nonPersistent()
+        }
         cfg.defaultWebpagePreferences.allowsContentJavaScript = javaScript
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = false
         cfg.preferences.isFraudulentWebsiteWarningEnabled = false
@@ -188,20 +214,37 @@ enum WebFactory {
 }
 
 /// Navigation policy shared by Markdown and HTML: only the initial page loads; links are
-/// either opened in Perlustra (local files) or offered to the browser explicitly.
+/// confined to `fileRoot` unless the user explicitly confirms opening an external target.
 @MainActor
 final class WebNavigator: NSObject, WKNavigationDelegate, WKUIDelegate {
     weak var host: RenderHost?
     var onFinish: (() -> Void)?
     var onFail: ((Error) -> Void)?
-    /// A local web app's folder: its own pages open in place instead of as separate files.
+    /// Confines local file links to the document's own folder (symlinks resolved).
+    var fileRoot: URL?
+    /// A local web app's folder: its own HTML pages open in place instead of as separate tabs.
     var siteRoot: URL?
 
     private func isSitePage(_ url: URL) -> Bool {
-        guard let root = siteRoot?.standardizedFileURL, url.scheme == "perlustra", url.host == "file",
-            let f = PerlustraSchemeHandler.resolve(url)?.standardizedFileURL
+        guard let root = siteRoot, url.scheme == "perlustra", url.host == "file",
+            let f = PerlustraSchemeHandler.resolve(url),
+            let resolved = FileAccessPolicy.fileInsideRoot(f, root: root)
         else { return false }
-        return ["html", "htm", "xhtml"].contains(f.pathExtension.lowercased()) && f.path.hasPrefix(root.path + "/")
+        return ["html", "htm", "xhtml"].contains(resolved.pathExtension.lowercased())
+            && resolved.path != root.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    private func openLocalLink(_ target: URL) {
+        if let root = fileRoot, let inside = FileAccessPolicy.fileInsideRoot(target, root: root) {
+            host?.open(inside)
+            return
+        }
+        guard FileManager.default.fileExists(atPath: target.path) else { return }
+        host?.showNotice(
+            "链接指向所在文件夹外的文件：\(target.path)",
+            style: .info,
+            action: NoticeAction(title: "打开") { [weak host] in host?.open(target) }
+        )
     }
 
     func webView(
@@ -209,8 +252,6 @@ final class WebNavigator: NSObject, WKNavigationDelegate, WKUIDelegate {
     ) {
         guard let url = action.request.url else { decisionHandler(.cancel); return }
         guard action.navigationType == .linkActivated else {
-            // Scripts and frames may move between local pages, never out to the network
-            // (that could carry data away).
             let scheme = url.scheme?.lowercased() ?? ""
             decisionHandler(["perlustra", "about", "data", "blob"].contains(scheme) ? .allow : .cancel)
             return
@@ -226,7 +267,7 @@ final class WebNavigator: NSObject, WKNavigationDelegate, WKUIDelegate {
         }
         decisionHandler(.cancel)
         if url.scheme == "perlustra", url.host == "file", let f = PerlustraSchemeHandler.resolve(url) {
-            host?.open(f)
+            openLocalLink(f)
         } else if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
             host?.showNotice(
                 "链接不会自动打开：\(url.absoluteString)", style: .info,
@@ -237,26 +278,28 @@ final class WebNavigator: NSObject, WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { onFinish?(); onFinish = nil }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { onFail?(error); onFail = nil }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { onFail?(error); onFail = nil }
-    /// Links meant for a new window: the site's own pages open in place, local files in Perlustra,
-    /// web addresses only on request.
+
     func webView(
         _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        guard navigationAction.navigationType == .linkActivated || navigationAction.sourceFrame.isMainFrame, let url = navigationAction.request.url else {
+        guard let url = navigationAction.request.url else { return nil }
+        if isSitePage(url), navigationAction.navigationType == .linkActivated || navigationAction.sourceFrame.isMainFrame {
+            webView.load(URLRequest(url: url))
             return nil
         }
-        if isSitePage(url) {
-            webView.load(URLRequest(url: url))
-        } else if url.scheme == "perlustra", url.host == "file", let f = PerlustraSchemeHandler.resolve(url) {
-            host?.open(f)
-        } else if navigationAction.navigationType == .linkActivated, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+        // Opening files or offering external URLs always requires an explicit user click.
+        guard navigationAction.navigationType == .linkActivated else { return nil }
+        if url.scheme == "perlustra", url.host == "file", let f = PerlustraSchemeHandler.resolve(url) {
+            openLocalLink(f)
+        } else if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
             host?.showNotice(
                 "链接不会自动打开：\(url.absoluteString)", style: .info,
                 action: NoticeAction(title: "在浏览器中打开") { NSWorkspace.shared.open(url) })
         }
         return nil
     }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         host?.showNotice("网页内容进程意外退出，已停止显示。", style: .warning, action: nil)
     }

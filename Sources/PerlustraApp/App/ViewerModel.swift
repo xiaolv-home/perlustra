@@ -31,6 +31,7 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
     private(set) var renderer: Renderer?
     weak var stage: StageViewController?
     weak var windowController: ViewerWindowController?
+    var sidebarHost: SidebarHost? { windowController }
     var window: NSWindow? { windowController?.window }
     /// True for the tab that is showing (only it may set the window's title).
     var isCurrent: Bool { windowController?.model === self }
@@ -75,6 +76,7 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
 
     private func openNow(_ url: URL) {
         let url = url.standardizedFileURL
+        let previousURL = file?.url
         loadGeneration += 1
         let gen = loadGeneration
         loadTask?.cancel()
@@ -85,6 +87,12 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
             outgoing = (r, installedView)
             renderer = nil
             installedView = nil
+        }
+        if let previousURL, previousURL != url, ArchivePreviewCache.shared.isPreviewFile(previousURL) {
+            let stillOpen = windowController?.allDocuments.contains { $0 !== self && $0.file?.url == previousURL } ?? false
+            if !stillOpen {
+                ArchivePreviewCache.shared.release(previousURL)
+            }
         }
         notice = nil
         failures = []
@@ -145,7 +153,13 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
         loading = nil
         renderer = nil
         engine = "—"
-        stage?.showFailure(file: file, reasons: failures)
+        // Strip internal engine names before showing reasons on screen (CONTRIBUTING.md).
+        let userReasons = failures.map { line in
+            line.split(separator: "：", maxSplits: 1).count == 2
+                ? String(line.split(separator: "：", maxSplits: 1)[1])
+                : line
+        }
+        stage?.showFailure(file: file, reasons: userReasons)
         onLoadFinished?("none", failures)
     }
 
@@ -323,7 +337,7 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
 
     /// Opens a file in a tab of its own (or switches to it when already open).
     func openInNewTab(_ url: URL) {
-        AppDelegate.shared?.openInTab(url, from: windowController)
+        sidebarHost?.openInTab(url)
     }
 
     func navigate(_ delta: Int) {
@@ -341,10 +355,4 @@ final class ViewerModel: ObservableObject, RenderHost, Identifiable {
 
     func perform(_ c: ViewerCommand) { renderer?.perform(c) }
     func supports(_ c: ViewerCommand) -> Bool { renderer?.supports(c) ?? false }
-}
-
-func debugLog(_ s: @autoclosure () -> String) {
-    if ProcessInfo.processInfo.environment["PERLUSTRA_DEBUG"] != nil {
-        FileHandle.standardError.write(Data(("[perlustra] " + s() + "\n").utf8))
-    }
 }

@@ -4,7 +4,6 @@ import PerlustraCore
 /// Where the AI may read and write, and how its files are written.
 @MainActor
 enum AIFiles {
-    static let fileCreated = Notification.Name("PerlustraAIFileCreated")
     static var home: URL { FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL }
 
     /// A path the model wrote: absolute, ~/…, or relative to `base`.
@@ -38,29 +37,37 @@ enum AIFiles {
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else { return url }
         let dir = url.deletingLastPathComponent(), stem = url.deletingPathExtension().lastPathComponent, ext = url.pathExtension
-        for i in 2...999 {
+        var i = 2
+        while true {
             let u = dir.appendingPathComponent("\(stem) \(i)" + (ext.isEmpty ? "" : ".\(ext)"))
             if !fm.fileExists(atPath: u.path) { return u }
+            i += 1
         }
-        return url
     }
 
     /// Writes sheets as .xlsx or .csv (never over an existing file: a free name is chosen).
-    static func writeTable(_ sheets: [(name: String, rows: [[CellValue]])], to path: String, near file: URL?) -> Result<URL, AIError> {
-        var url = resolve(path, base: baseFolder(near: file))
+    static func writeTable(
+        _ sheets: [(name: String, rows: [[CellValue]])],
+        to path: String,
+        near file: URL?,
+        browsing: URL? = nil
+    ) -> Result<URL, AIError> {
+        var url = resolve(path, base: baseFolder(near: file, browsing: browsing))
         if url.pathExtension.isEmpty { url.appendPathExtension("xlsx") }
+        let ext = url.pathExtension.lowercased()
+        if (ext == "csv" || ext == "tsv") && sheets.count > 1 {
+            return .failure(AIError("CSV / TSV 只支持单张工作表；包含多张工作表时请保存为 .xlsx"))
+        }
         if let why = writable(url) { return .failure(AIError(why)) }
         url = unique(url)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            switch url.pathExtension.lowercased() {
+            switch ext {
             case "csv":
                 _ = try CSVWriter.write(rows: sheets.first?.rows ?? [], format: CSVFormat(delimiter: 44, encoding: .utf8, bom: true, crlf: true), to: url)
             case "tsv":
                 _ = try CSVWriter.write(rows: sheets.first?.rows ?? [], format: CSVFormat(delimiter: 9, encoding: .utf8, bom: true, crlf: true), to: url)
             case "xlsx":
-                // Text starting with "=" is written as a live formula, with its value worked out
-                // now so the file shows numbers even in viewers that do not recalculate.
                 var wb = Workbook(
                     sheets: sheets.map { s in
                         var sh = Sheet(name: s.name, rows: s.rows)
@@ -87,10 +94,5 @@ enum AIFiles {
         } catch {
             return .failure(AIError("写入失败：\(error.localizedDescription)"))
         }
-    }
-
-    /// Tells the AI panel a file was produced (it shows Open / Show in Finder).
-    static func announce(_ url: URL) {
-        NotificationCenter.default.post(name: fileCreated, object: url)
     }
 }

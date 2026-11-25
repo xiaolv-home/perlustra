@@ -40,19 +40,8 @@ final class AISession: ObservableObject {
     @Published private(set) var conversation: AIConversation?
     private var task: Task<Void, Never>?
     private var approvals: [UUID: CheckedContinuation<Bool, Never>] = [:]
-    private var fileObserver: NSObjectProtocol?
 
-    init() {
-        fileObserver = NotificationCenter.default.addObserver(forName: AIFiles.fileCreated, object: nil, queue: .main) { [weak self] n in
-            guard let url = n.object as? URL else { return }
-            MainActor.assumeIsolated {
-                guard let self, self.running else { return }
-                self.items.append(AIItem(kind: .file(url)))
-            }
-        }
-    }
-
-    deinit { if let o = fileObserver { NotificationCenter.default.removeObserver(o) } }
+    init() {}
 
     var isEmpty: Bool { items.isEmpty }
 
@@ -281,6 +270,9 @@ final class AISession: ObservableObject {
                 case .tool(let n, let s, _, _) = items[i].kind
             {
                 items[i].kind = .tool(name: n, summary: s, result: AIToolNames.resultLine(call, out), failed: out.isError)
+            }
+            for url in out.createdFiles {
+                items.append(AIItem(kind: .file(url)))
             }
             statusLine = "继续…"
         case .message(let m):

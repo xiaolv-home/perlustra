@@ -200,7 +200,7 @@ private final class WriterBridge: NSObject, WKScriptMessageHandlerWithReply {
         replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void
     ) {
         guard let body = message.body as? [String: Any] else { replyHandler(nil, nil); return }
-        MainActor.assumeIsolated {
+        _ = MainActor.assumeIsolated {
             Task { @MainActor [weak self] in
                 let reply = await self?.writer?.received(body)
                 replyHandler(reply, nil)

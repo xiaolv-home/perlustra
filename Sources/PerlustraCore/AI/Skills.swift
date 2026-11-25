@@ -15,9 +15,12 @@ public struct Skill: Sendable, Identifiable, Equatable {
 
     public var skillFile: URL { folder.appendingPathComponent(SkillLibrary.fileName(in: folder) ?? "SKILL.md") }
 
-    /// The instructions (front matter removed).
+    /// The instructions (front matter removed). Rejects symlinks escaping the skill folder.
     public func instructions() -> String {
-        guard let text = try? String(contentsOf: skillFile, encoding: .utf8) else { return "" }
+        guard let safeFile = FileAccessPolicy.fileInsideRoot(skillFile, root: folder),
+            (try? safeFile.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+            let text = try? String(contentsOf: safeFile, encoding: .utf8)
+        else { return "" }
         return SkillLibrary.parseFrontMatter(text).body
     }
 
@@ -181,14 +184,20 @@ public enum SkillInstaller {
     /// and the short form owner/repo.
     public static func parse(_ text: String) -> Source? {
         var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let hash = s.firstIndex(of: "#") { s = String(s[..<hash]) }
+        if let q = s.firstIndex(of: "?") { s = String(s[..<q]) }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         for p in ["https://", "http://"] where s.hasPrefix(p) { s.removeFirst(p.count) }
         if s.hasPrefix("www.") { s.removeFirst(4) }
         if s.hasPrefix("github.com/") { s.removeFirst("github.com/".count) }
         if s.hasSuffix(".git") { s.removeLast(4) }
-        let parts = s.split(separator: "/").map(String.init)
-        guard parts.count >= 2, !parts[0].contains("."), !parts[0].isEmpty else { return nil }
+        let parts = s.split(separator: "/").map { ($0.removingPercentEncoding ?? String($0)).trimmingCharacters(in: .whitespacesAndNewlines) }
+        let safeToken: (String) -> Bool = { tok in
+            !tok.isEmpty && tok != "." && tok != ".." && !tok.contains(where: { $0.isWhitespace || $0.isNewline })
+        }
+        guard parts.count >= 2, !parts[0].contains("."), safeToken(parts[0]), safeToken(parts[1]) else { return nil }
         var src = Source(owner: parts[0], repo: parts[1], ref: nil, path: "")
-        if parts.count >= 4, parts[2] == "tree" || parts[2] == "blob" {
+        if parts.count >= 4, parts[2] == "tree" || parts[2] == "blob", safeToken(parts[3]) {
             src.ref = parts[3]
             var rest = Array(parts.dropFirst(4))
             if parts[2] == "blob", let last = rest.last, last.lowercased().hasSuffix(".md") { rest.removeLast() }
@@ -199,6 +208,18 @@ public enum SkillInstaller {
 
     public enum Progress: Sendable { case downloading, unpacking, installing }
 
+    private static func makeGitHubURL(host: String, segments: [String]) throws -> URL {
+        var c = URLComponents()
+        c.scheme = "https"
+        c.host = host
+        let encoded = segments.map { seg in
+            seg.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? seg
+        }
+        c.percentEncodedPath = "/" + encoded.joined(separator: "/")
+        guard let u = c.url else { throw AIError("GitHub 仓库地址格式不正确") }
+        return u
+    }
+
     /// Downloads the repository and copies every skill folder under `source.path` into `destination`.
     /// Returns the installed skills. Existing skills with the same folder name are replaced.
     public static func install(
@@ -207,7 +228,7 @@ public enum SkillInstaller {
     ) async throws -> [Skill] {
         await progress(.downloading)
         let ref = try await resolveRef(source, session: session)
-        let zipURL = URL(string: "https://codeload.github.com/\(source.owner)/\(source.repo)/zip/\(ref)")!
+        let zipURL = try makeGitHubURL(host: "codeload.github.com", segments: [source.owner, source.repo, "zip", ref])
         var req = URLRequest(url: zipURL)
         req.timeoutInterval = 120
         let (tmp, resp) = try await session.download(for: req)
@@ -223,7 +244,8 @@ public enum SkillInstaller {
 
     static func resolveRef(_ s: Source, session: URLSession) async throws -> String {
         if let r = s.ref { return r }
-        var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(s.owner)/\(s.repo)")!)
+        let apiURL = try makeGitHubURL(host: "api.github.com", segments: ["repos", s.owner, s.repo])
+        var req = URLRequest(url: apiURL)
         req.timeoutInterval = 30
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let (data, resp) = try await session.data(for: req)
@@ -262,13 +284,16 @@ public enum SkillInstaller {
             }
             let staging = destination.appendingPathComponent(".staging-\(UUID().uuidString)")
             try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+            defer {
+                if fm.fileExists(atPath: staging.path) { try? fm.removeItem(at: staging) }
+            }
             let base = dir.isEmpty ? "" : dir + "/"
             for (path, data) in tree where path.hasPrefix(base) {
-                let rel = String(path.dropFirst(base.count))
+                let rawRel = String(path.dropFirst(base.count))
+                guard let rel = ArchivePathSafety.sanitizeRelativePath(rawRel) else { continue }
                 // Repository plumbing is not part of a skill.
                 if rel.hasPrefix(".git/") || rel.hasPrefix(".github/") || rel.contains("node_modules/") || data.count > 20 << 20 { continue }
-                guard !rel.split(separator: "/").contains("..") else { continue }
-                let out = staging.appendingPathComponent(rel)
+                guard let out = ArchivePathSafety.safeDestination(relativePath: rel, under: staging) else { continue }
                 try fm.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: out)
             }

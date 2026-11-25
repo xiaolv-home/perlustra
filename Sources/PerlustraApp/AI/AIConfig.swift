@@ -155,7 +155,7 @@ final class AIKeyStore {
         let base =
             AppEnvironment.isScripted
             ? FileManager.default.temporaryDirectory.appendingPathComponent("perlustra-harness-keys")
-            : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("Perlustra")
+            : AppPaths.applicationSupport
         return base.appendingPathComponent("ai-keys.json")
     }
 
@@ -179,18 +179,10 @@ final class AIKeyStore {
         let dir = Self.file.deletingLastPathComponent()
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let d = try? JSONEncoder().encode(keys) else { return }
-        // Create with owner-only permissions before any key is written to it.
-        let tmp = Self.file.deletingLastPathComponent().appendingPathComponent(".ai-keys-\(UUID().uuidString).tmp")
-        do {
-            try d.write(to: tmp, options: [.atomic])
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
-            if fm.fileExists(atPath: Self.file.path) {
-                _ = try fm.replaceItemAt(Self.file, withItemAt: tmp)
-            } else {
-                try fm.moveItem(at: tmp, to: Self.file)
-            }
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: Self.file.path)
-        } catch {
+        // Create the inode with mode 0600 before writing bytes so keys are never world-readable.
+        let tmp = dir.appendingPathComponent(".ai-keys-\(UUID().uuidString).tmp")
+        guard fm.createFile(atPath: tmp.path, contents: d, attributes: [.posixPermissions: 0o600]) else { return }
+        if Darwin.rename(tmp.path, Self.file.path) != 0 {
             try? fm.removeItem(at: tmp)
         }
     }

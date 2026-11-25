@@ -107,10 +107,13 @@ public struct AIToolOutput: Sendable, Equatable {
     public var isError: Bool
     /// Pictures returned for the model to look at (view_image).
     public var images: [AIImage]?
-    public init(_ text: String, isError: Bool = false, images: [AIImage]? = nil) {
+    /// Files produced on disk by this tool call, scoped to the owning AI session.
+    public var createdFiles: [URL]
+    public init(_ text: String, isError: Bool = false, images: [AIImage]? = nil, createdFiles: [URL] = []) {
         self.text = text
         self.isError = isError
         self.images = images
+        self.createdFiles = createdFiles
     }
     public static func error(_ text: String) -> AIToolOutput { AIToolOutput(text, isError: true) }
 }

@@ -29,13 +29,17 @@ enum Zip {
             p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
             p.currentDirectoryURL = directory
             p.arguments = args
-            p.standardOutput = Pipe()
+            p.standardOutput = FileHandle.nullDevice
             let err = Pipe()
             p.standardError = err
+            let errBuf = PipeCollector()
+            err.fileHandleForReading.readabilityHandler = { h in errBuf.append(h.availableData) }
             try p.run()
             p.waitUntilExit()
+            err.fileHandleForReading.readabilityHandler = nil
+            errBuf.append(err.fileHandleForReading.readDataToEndOfFile())
             if p.terminationStatus != 0 && p.terminationStatus != 12 {  // 12 = nothing to do
-                let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                let msg = String(decoding: errBuf.data, as: UTF8.self)
                 throw SaveError("压缩失败：\(msg)")
             }
         }
@@ -43,6 +47,25 @@ enum Zip {
             try run(["-X", "-q", "-D", out.path, "[Content_Types].xml"])
         }
         try run(["-X", "-q", "-r", "-D", out.path, ".", "-x", "[Content_Types].xml", "-x", ".DS_Store"])
+    }
+}
+
+/// Drains a child process pipe concurrently so >64 KB of output can never deadlock `waitUntilExit()`.
+public final class PipeCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes = Data()
+    private let cap: Int
+    public init(cap: Int = 256 * 1024) { self.cap = cap }
+    public func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        if bytes.count < cap { bytes.append(chunk.prefix(cap - bytes.count)) }
+        lock.unlock()
+    }
+    public var data: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return bytes
     }
 }
 

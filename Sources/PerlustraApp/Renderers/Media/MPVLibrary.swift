@@ -58,13 +58,34 @@ enum MPVLibrary {
     static var candidates: [String] {
         var c: [String] = []
         let custom = UserDefaults.standard.string(forKey: "mpvPath") ?? ""
-        if !custom.isEmpty { c.append(custom) }
+        if !custom.isEmpty, isTrustedLibraryPath(custom) {
+            c.append(URL(fileURLWithPath: custom).resolvingSymlinksInPath().standardizedFileURL.path)
+        }
         c += [
             "/opt/homebrew/lib/libmpv.2.dylib", "/opt/homebrew/lib/libmpv.dylib", "/opt/homebrew/opt/mpv/lib/libmpv.2.dylib",
             "/usr/local/lib/libmpv.2.dylib", "/usr/local/lib/libmpv.dylib", "/usr/local/opt/mpv/lib/libmpv.2.dylib",
             "/opt/local/lib/libmpv.2.dylib",
         ]
         return c
+    }
+
+    /// Rejects untrusted dylib locations (temp folders, Downloads, hidden directories, non-mpv filenames).
+    static func isTrustedLibraryPath(_ rawPath: String) -> Bool {
+        let resolved = URL(fileURLWithPath: (rawPath as NSString).expandingTildeInPath)
+            .resolvingSymlinksInPath().standardizedFileURL
+        let path = resolved.path
+        let name = resolved.lastPathComponent.lowercased()
+        guard name.hasPrefix("libmpv"), name.hasSuffix(".dylib") else { return false }
+        guard (try? resolved.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return false }
+        let untrustedPrefixes = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"]
+        if untrustedPrefixes.contains(where: { path.hasPrefix($0) }) { return false }
+        let home = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().standardizedFileURL.path
+        if FileAccessPolicy.contains(path, root: home) {
+            let rel = String(path.dropFirst(home.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let parts = rel.split(separator: "/").map(String.init)
+            if parts.first == "Downloads" || parts.contains(where: { $0.hasPrefix(".") }) { return false }
+        }
+        return true
     }
 
     static func load() -> (path: String, api: API)? {
@@ -96,6 +117,7 @@ enum MPVLibrary {
                 )
                 break
             }
+            dlclose(h)
         }
         cached = .some(result.map { (path: $0.0, api: $0.1) })
         return result.map { (path: $0.0, api: $0.1) }
